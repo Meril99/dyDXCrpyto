@@ -3,38 +3,52 @@
 <div align="center">
 
 ![Python](https://img.shields.io/badge/python-3.8%2B-blue)
+![C++](https://img.shields.io/badge/C%2B%2B-17-blue)
 ![License](https://img.shields.io/badge/license-Apache%202.0-green)
-![Tests](https://img.shields.io/badge/tests-143%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-153%20passing-brightgreen)
 ![Type Hints](https://img.shields.io/badge/typing-fully%20typed-blue)
 
 </div>
 
-Python REST API client for [dYdX v3](https://dydx.exchange) perpetual futures exchange, with an integrated **quantitative trading toolkit** featuring a market-making engine, backtesting framework, signal pipeline, and risk monitor.
+Full-stack crypto trading system built on the [dYdX v3](https://dydx.exchange) perpetual futures exchange. Includes a Python REST API client, quantitative trading toolkit (market making, backtesting, signals, risk), a high-performance C++ order book engine, and an LLM-powered Telegram trading agent.
 
 ## Architecture
 
 ```
-                    +-----------+
-   Market Data ---> |  Signals  | ---> Normalized scores [-1, 1]
-                    +-----------+
-                         |
-                         v
-                   +----------------+      +--------------+
-                   | Market Maker   | ---> | Risk Monitor |
-                   | (A-S optimal   |      | (circuit     |
-                   |  quoting)      |      |  breakers)   |
-                   +----------------+      +--------------+
-                         |
-                         v
-                   +-----------+
-                   | Backtester| (validate strategies offline)
-                   +-----------+
+ News Headlines ──┐
+                  ▼
+              ┌──────────┐
+ Orderbook ──>│  Signal   │──> Composite Score [-1, +1]
+ Funding ────>│  Pipeline │        │
+ Volatility ─>│  (5 sigs) │        │
+              └──────────┘        ▼
+              ┌────────────────────────────┐    ┌───────────────┐
+              │  Avellaneda-Stoikov        │───>│ Risk Monitor  │
+              │  Market Maker              │    │ (6 circuit    │
+              │  (inventory skew + quotes) │    │  breakers)    │
+              └────────────────────────────┘    └───────────────┘
+                       │                              │
+                       ▼                              ▼
+              ┌──────────────┐               ┌──────────────┐
+              │  Backtester  │               │   Telegram    │
+              │  (offline    │               │   LLM Agent   │
+              │   validation)│               │   (monitor &  │
+              └──────────────┘               │    control)   │
+                                             └──────────────┘
+                       │
+              ┌──────────────┐
+              │  C++ Order   │  ~7000x faster queries
+              │  Book Engine │  (pybind11)
+              └──────────────┘
 ```
 
 ## Installation
 
 ```bash
 pip install -r requirements.txt
+
+# Optional: build the C++ order book for high-performance use
+cd cpp && ./build.sh
 ```
 
 Requires Python 3.8+. Key dependencies: `web3`, `numpy`, `pandas`.
@@ -101,35 +115,69 @@ print(f"Max DD:   {result.metrics['max_drawdown']:.1%}")
 print(f"Return:   {result.metrics['total_return']:.1%}")
 ```
 
-### Market Making with Signals
+### Run the Bot (24/7)
 
-```python
-from quant import MarketMaker, MarketMakerConfig, OrderbookImbalance
+```bash
+cp .env.example .env   # fill in your API keys
+PYTHONPATH=. python3 bot.py
+```
 
-mm = MarketMaker(client, MarketMakerConfig(
-    market='BTC-USD',
-    order_size=0.001,
-    max_inventory=0.01,
-    gamma=0.1,        # risk aversion
-    k=1.5,            # order arrival intensity
-    min_spread_bps=5,
-))
+The bot runs the market maker with all 5 signals, risk monitoring, and Telegram alerts. See [Deployment](#deployment) for running on a server.
 
-# Continuous quoting loop
-while True:
-    bid, ask = mm.run_once()
-    time.sleep(mm._config.refresh_interval_s)
+### Chat with Your Bot via Telegram
+
+```bash
+PYTHONPATH=. python3 -m quant.telegram_bot
+```
+
+```
+You:  "What's my position?"
+Bot:  "BTC-USD: LONG 0.003 @ $50,200 | uPnL: +$15.00"
+
+You:  "Show risk status"
+Bot:  "Risk Status: OK
+       Equity: $10,250  Drawdown: 1.2%  VaR: $328"
+
+You:  "Cancel all orders"
+Bot:  "All orders cancelled for all markets."
 ```
 
 ## Quantitative Components
+
+### Signal Pipeline (5 Signals)
+
+Every signal outputs a normalized score in [-1, 1]. They feed into the market maker via a weighted combiner.
+
+| Signal | Weight | Description | Formula |
+|--------|--------|-------------|---------|
+| **Orderbook Imbalance** | 15% | Bid/ask volume ratio from L2 book | `(bid_vol - ask_vol) / total` |
+| **Funding Rate Mean Reversion** | 30% | Extreme funding predicts reversion | `-tanh(avg_rate / threshold)` |
+| **Volatility Regime** | 30% | Classifies vol into LOW/NORMAL/HIGH/CRISIS | Percentile rank of rolling vol |
+| **News Sentiment (LLM)** | 25% | Headlines classified by Claude/GPT | LLM outputs [-1, 1] score |
+| **Cross-Asset Momentum** | - | Leader-follower lag (BTC->ETH) | `clip((leader_z - follower_z) / 4)` |
+
+The **news sentiment signal** fetches crypto headlines (via CryptoPanic API), sends them to an LLM (Claude Haiku or GPT-4o-mini) for classification, and caches results for 5 minutes to minimize API costs. If no LLM key is configured, it defaults to neutral (0.0).
+
+```python
+from quant import SignalCombiner, OrderbookImbalance
+from quant.sentiment_signal import NewsSentimentSignal
+
+sentiment = NewsSentimentSignal("BTC-USD", cache_duration_s=300)
+combiner = SignalCombiner({
+    'ob_imbalance_BTC-USD': 0.15,
+    'funding_mr_BTC-USD': 0.30,
+    'vol_regime_BTC-USD': 0.30,
+    'news_sentiment_BTC-USD': 0.25,
+})
+```
 
 ### Market-Making Engine
 
 Implements the **Avellaneda-Stoikov (2008)** optimal market-making model for perpetual futures.
 
 **Core formulas:**
-- **Reservation price:** `r = mid - q * γ * σ² * τ` — shifts quotes to shed inventory
-- **Optimal spread:** `δ = γ * σ² * τ + (2/γ) * ln(1 + γ/k)` — widens with volatility and risk aversion
+- **Reservation price:** `r = mid - q * gamma * sigma^2 * tau` — shifts quotes to shed inventory
+- **Optimal spread:** `delta = gamma * sigma^2 * tau + (2/gamma) * ln(1 + gamma/k)` — widens with volatility
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
@@ -137,20 +185,19 @@ Implements the **Avellaneda-Stoikov (2008)** optimal market-making model for per
 | `k` | Order arrival intensity | 1.5 |
 | `min_spread_bps` | Minimum spread floor | 5 bps |
 | `max_spread_bps` | Maximum spread cap | 100 bps |
-| `max_inventory` | Hard position limit | - |
+| `max_inventory` | Hard position limit | configurable |
 | `session_duration_s` | Rolling time horizon | 3600s |
 
 Key features:
-- Inventory skewing (long inventory → lower quotes to attract sellers)
-- Signal integration via `apply_signal()` for directional bias
-- Rolling session horizon avoids τ→0 singularity
+- Inventory skewing (long inventory -> lower quotes to attract sellers)
+- Signal integration via `apply_signal()` for directional bias from all 5 signals
+- Rolling session horizon avoids tau->0 singularity
 - Pure computation separated from exchange interaction for testability
 
 ### Backtesting Framework
 
 Event-driven backtester with vectorized data loading and realistic simulation.
 
-**Strategy interface:**
 ```python
 class Strategy(abc.ABC):
     @abc.abstractmethod
@@ -161,38 +208,17 @@ class Strategy(abc.ABC):
 
 Features:
 - **Lookahead prevention** via `BacktestContext.lookback(n)`
-- **Fill simulation**: market orders at close ± slippage, limit orders check candle range
+- **Fill simulation**: market orders at close +/- slippage, limit orders check candle range
 - **Position management**: weighted-avg entry on increase, realized PnL on reduce/flip
 - **Funding rate simulation**: hourly payments matching dYdX's model (critical for perps)
 - **Metrics**: Sharpe, Sortino, max drawdown, total return, win rate, profit factor
 
-### Signal Pipeline
-
-Four signal generators, each outputting a normalized score in [-1, 1]:
-
-| Signal | Description | Formula |
-|--------|-------------|---------|
-| **Orderbook Imbalance** | Bid/ask volume ratio from L2 book | `(bid_vol - ask_vol) / total` |
-| **Funding Rate Mean Reversion** | Extreme funding predicts reversion | `-tanh(avg_rate / threshold)` |
-| **Cross-Asset Momentum** | Leader-follower lag detection (BTC→ETH) | `clip((leader_z - follower_z) / 4)` |
-| **Volatility Regime** | Classifies vol into LOW/NORMAL/HIGH/CRISIS | Percentile rank of rolling vol |
-
-Signals compose via `SignalCombiner` with configurable weights:
-```python
-combiner = SignalCombiner({
-    'ob_imbalance_BTC-USD': 0.3,
-    'funding_mr_BTC-USD': 0.4,
-    'vol_regime_BTC-USD': 0.3,
-})
-composite = combiner.combine([sig1, sig2, sig3])
-```
-
 ### Risk Monitor
 
-Real-time portfolio risk tracking with configurable circuit breakers.
+Real-time portfolio risk tracking with 6 configurable circuit breakers.
 
-| Circuit Breaker | Default Threshold | Description |
-|----------------|-------------------|-------------|
+| Circuit Breaker | Default | Description |
+|----------------|---------|-------------|
 | Max drawdown | 10% | From peak equity |
 | Max exposure | $50,000 | Total notional across all positions |
 | Margin utilization | 80% | Exposure / equity |
@@ -204,20 +230,19 @@ Features:
 - Works in **live mode** (fetches from API) and **backtest mode** (pure computation)
 - Historical simulation VaR with parametric fallback
 - `emergency_flatten()` cancels all orders and closes positions
-- Callback hook `on_breaker` for custom alerting
+- Callback hook `on_breaker` for Telegram alerts
 
 ## C++ Order Book Engine
 
-High-performance L2 order book implemented in C++ with pybind11 Python bindings. ~**85x faster** than an equivalent pure Python implementation.
+High-performance L2 order book implemented in C++17 with pybind11 Python bindings.
 
-**Operations:**
-- `add_order(id, side, price, size)` — O(log N) insert into sorted price map
-- `cancel_order(id)` — O(1) lookup + O(log N) level removal
-- `modify_order(id, new_size)` — O(1) lookup + O(1) size update
-- `top()` — O(1) BBO, mid-price, micro-price, spread
-- `vwap(side, size)` — sweep through levels for volume-weighted avg price
-- `imbalance(depth)` — bid/ask volume ratio over top N levels
-- `bid_depth(n)` / `ask_depth(n)` — N levels of market depth
+**Benchmark results** (100K orders + 50K queries):
+
+| Operation | Python | C++ | Speedup |
+|-----------|--------|-----|---------|
+| Add orders | 1.9M ops/s | 1.5M ops/s | ~1x |
+| Cancel orders | 1.2M ops/s | 1.3M ops/s | ~1x |
+| **Queries (top + imbalance)** | **199 ops/s** | **1.4M ops/s** | **7,024x** |
 
 **Data structures:** `std::map<double, PriceLevel>` for O(log N) sorted levels, `std::unordered_map<uint64_t, Order>` for O(1) order lookup.
 
@@ -236,10 +261,51 @@ print(f"Imbalance: {book.imbalance(10):+.3f}")
 
 **Build:**
 ```bash
-cd cpp && ./build.sh
+cd cpp && ./build.sh   # Requires CMake 3.14+, C++17 compiler, pybind11
 ```
 
-Requires CMake 3.14+, a C++17 compiler, and pybind11 (`pip install pybind11`).
+## LLM Telegram Agent
+
+Natural language interface to monitor and control the bot from your phone. Uses **tool-calling** — the LLM decides which API queries to run based on your message.
+
+**9 tools available:** positions, account, orderbook, market price, risk status, signals, recent fills, funding payments, cancel orders.
+
+Supports both **Anthropic (Claude)** and **OpenAI (GPT)** APIs.
+
+```bash
+# Set in .env:
+TELEGRAM_BOT_TOKEN=your-token
+TELEGRAM_CHAT_ID=your-chat-id
+ANTHROPIC_API_KEY=sk-ant-...   # or OPENAI_API_KEY
+
+# Run:
+PYTHONPATH=. python3 -m quant.telegram_bot
+```
+
+## Deployment
+
+### Run as a 24/7 Service
+
+```bash
+# 1. Set up a server (Ubuntu VPS — DigitalOcean $6/mo, Hetzner $4/mo)
+# 2. Clone and configure:
+git clone https://github.com/Meril99/dyDXCrpyto.git
+cd dydx-v3-python
+cp .env.example .env && nano .env    # fill in credentials
+
+# 3. Run the setup script:
+chmod +x deploy/setup-server.sh && ./deploy/setup-server.sh
+
+# 4. Start the bot:
+sudo systemctl start dydx-bot
+sudo systemctl enable dydx-bot       # auto-start on reboot
+
+# 5. Monitor:
+tail -f bot.log                       # live logs
+sudo systemctl status dydx-bot       # service status
+```
+
+The systemd service auto-restarts on crash. The bot sends Telegram alerts for trades, circuit breakers, errors, and periodic heartbeats.
 
 ## Project Structure
 
@@ -253,51 +319,58 @@ dydx3/                    # API client library
 
 cpp/                      # C++ order book engine
   orderbook.h / .cpp      #   Core engine (std::map + unordered_map)
-  bindings.cpp             #   pybind11 Python module
-  CMakeLists.txt           #   Build configuration
-  benchmark.py             #   Python vs C++ benchmark (~85x speedup)
+  bindings.cpp            #   pybind11 Python module
+  CMakeLists.txt          #   Build configuration
+  benchmark.py            #   Python vs C++ benchmark
 
 quant/                    # Quantitative trading toolkit
   types.py                #   Shared dataclasses (Candle, Position, Signal, etc.)
   utils.py                #   Numerical helpers (vol, Sharpe, drawdown)
   signals.py              #   4 signal generators + SignalCombiner
+  sentiment_signal.py     #   LLM-based news sentiment signal
   backtester.py           #   Strategy ABC + Backtester engine
   market_maker.py         #   Avellaneda-Stoikov market maker
   risk_monitor.py         #   Risk tracking + circuit breakers
+  alerts.py               #   Telegram notification module
+  llm_agent.py            #   LLM agent with tool-calling (Claude / GPT)
+  llm_tools.py            #   9 tool definitions for the LLM agent
+  telegram_bot.py         #   Telegram bot interface
 
-examples/                 # Runnable examples
+deploy/                   # Server deployment
+  setup-server.sh         #   One-command Ubuntu server setup
+  dydx-bot.service        #   systemd service (auto-restart)
+
+bot.py                    # Main 24/7 bot entry point
+.env.example              # Configuration template
+
+examples/                 # Runnable demos
   quant_backtest.py       #   Momentum strategy backtest
   quant_market_maker.py   #   Market maker with signals
   quant_signals.py        #   Signal pipeline demo
-  quant_risk_monitor.py   #   Risk monitor demo
+  quant_risk_monitor.py   #   Risk monitor scenarios
 
-tests/                    # 143 unit tests
+tests/                    # 153 unit tests
 ```
 
 ## Running Examples
 
 ```bash
-python examples/quant_backtest.py        # Backtest a momentum strategy
-python examples/quant_market_maker.py    # Market maker dry run
-python examples/quant_signals.py         # Signal pipeline demo
-python examples/quant_risk_monitor.py    # Risk monitor scenarios
+PYTHONPATH=. python3 examples/quant_backtest.py        # Backtest a momentum strategy
+PYTHONPATH=. python3 examples/quant_market_maker.py    # Market maker dry run
+PYTHONPATH=. python3 examples/quant_signals.py         # Signal pipeline demo
+PYTHONPATH=. python3 examples/quant_risk_monitor.py    # Risk monitor scenarios
+PYTHONPATH=. python3 cpp/benchmark.py                  # C++ vs Python benchmark
 ```
 
 ## Development
 
 ```bash
-# Install dependencies
 pip install -r requirements.txt
 pip install -r requirements-test.txt
 
-# Run tests
-pytest tests/
-
-# Lint
-flake8 dydx3/ quant/ --max-line-length=100
-
-# Type check
-mypy dydx3/ --ignore-missing-imports
+pytest tests/                                          # Run tests
+flake8 dydx3/ quant/ --max-line-length=100             # Lint
+mypy dydx3/ --ignore-missing-imports                   # Type check
 ```
 
 ## API Client Reference
@@ -314,17 +387,6 @@ mypy dydx3/ --ignore-missing-imports
 ### Supported Markets
 
 39 perpetual futures markets including BTC-USD, ETH-USD, SOL-USD, AVAX-USD, LINK-USD, AAVE-USD, UNI-USD, DOGE-USD, MATIC-USD, and more. All USDC-margined.
-
-### STARK Signing Performance
-
-For faster order signing, provide a path to the C++ shared library:
-
-```python
-client = Client(
-    crypto_c_exports_path='./libcrypto_c_exports.so',
-    ...
-)
-```
 
 ## License
 
