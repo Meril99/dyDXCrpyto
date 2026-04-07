@@ -1,3 +1,9 @@
+"""EIP-712 signing for authenticated private API requests."""
+
+from __future__ import annotations
+
+from typing import Any, Dict, List
+
 from web3 import Web3
 
 from dydx3.eth_signing import util
@@ -10,32 +16,34 @@ EIP712_ETH_PRIVATE_ACTION_STRUCT_STRING = [
     {'type': 'string', 'name': 'timestamp'},
 ]
 EIP712_ETH_PRIVATE_ACTION_STRUCT_STRING_STRING = (
-    'dYdX(' +
-    'string method,' +
-    'string requestPath,' +
-    'string body,' +
-    'string timestamp' +
+    'dYdX('
+    'string method,'
+    'string requestPath,'
+    'string body,'
+    'string timestamp'
     ')'
 )
 EIP712_STRUCT_NAME = 'dYdX'
 
 
 class SignEthPrivateAction(SignOffChainAction):
+    """Sign private API requests using EIP-712 typed data."""
 
-    def get_eip712_struct(self):
+    def get_eip712_struct(self) -> List[Dict[str, str]]:
         return EIP712_ETH_PRIVATE_ACTION_STRUCT_STRING
 
-    def get_eip712_struct_name(self):
+    def get_eip712_struct_name(self) -> str:
         return EIP712_STRUCT_NAME
 
     def get_eip712_message(
         self,
-        method,
-        request_path,
-        body,
-        timestamp,
-    ):
-        return super(SignEthPrivateAction, self).get_eip712_message(
+        method: str = '',
+        request_path: str = '',
+        body: str = '',
+        timestamp: str = '',
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        return super().get_eip712_message(
             method=method,
             requestPath=request_path,
             body=body,
@@ -44,19 +52,14 @@ class SignEthPrivateAction(SignOffChainAction):
 
     def get_hash(
         self,
-        method,
-        request_path,
-        body,
-        timestamp,
-    ):
+        method: str = '',
+        request_path: str = '',
+        body: str = '',
+        timestamp: str = '',
+        **kwargs: Any,
+    ) -> bytes:
         data = [
-            [
-                'bytes32',
-                'bytes32',
-                'bytes32',
-                'bytes32',
-                'bytes32',
-            ],
+            ['bytes32', 'bytes32', 'bytes32', 'bytes32', 'bytes32'],
             [
                 util.hash_string(
                     EIP712_ETH_PRIVATE_ACTION_STRUCT_STRING_STRING,

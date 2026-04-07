@@ -9,22 +9,22 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12"]
     steps:
       - name: Check out repository code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v4
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
         with:
-          python-version: 3.11
+          python-version: ${{ matrix.python-version }}
 
-      - name: Run Ganache
-        run: docker-compose up -d
+      - name: Install dependencies
+        run: pip install -r requirements-test.txt
 
-      - name: Install Dependencies
-        run: sudo pip install -r requirements-test.txt
-
-      - name: Test
+      - name: Run tests
         env:
           V3_API_HOST: https://api.stage.dydx.exchange
-        run: tox
+        run: pytest tests/

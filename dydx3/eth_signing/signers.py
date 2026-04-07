@@ -1,48 +1,46 @@
+"""Ethereum signing implementations using Web3 or a raw private key."""
+
+from __future__ import annotations
+
+from typing import Any, Dict, Optional
+
 import eth_account
 
 from dydx3.constants import SIGNATURE_TYPE_NO_PREPEND
 from dydx3.eth_signing import util
 
 
-class Signer(object):
+class Signer:
+    """Base class for Ethereum signers."""
 
     def sign(
         self,
-        eip712_message,
-        message_hash,
-        opt_signer_address,
-    ):
-        '''
-        Sign an EIP-712 message.
+        eip712_message: Dict[str, Any],
+        message_hash: bytes,
+        opt_signer_address: Optional[str],
+    ) -> str:
+        """Sign an EIP-712 message and return a typed signature.
 
-        Returns a “typed signature” whose last byte indicates whether the hash
-        was prepended before being signed.
-
-        :param eip712_message: required
-        :type eip712_message: dict
-
-        :param message_hash: required
-        :type message_hash: HexBytes
-
-        :param opt_signer_address: optional
-        :type opt_signer_address: str
-
-        :returns: str
-        '''
+        :param eip712_message: The structured EIP-712 message.
+        :param message_hash: The hash of the message.
+        :param opt_signer_address: Optional signer address override.
+        :returns: Typed signature string.
+        """
         raise NotImplementedError()
 
 
 class SignWithWeb3(Signer):
+    """Sign messages using a Web3 provider (e.g. MetaMask, hardware wallet)."""
 
-    def __init__(self, web3):
+    def __init__(self, web3: Any) -> None:
         self.web3 = web3
 
     def sign(
         self,
-        eip712_message,
-        message_hash,  # Ignored.
-        opt_signer_address,
-    ):
+        eip712_message: Dict[str, Any],
+        message_hash: bytes,  # Ignored when signing via Web3.
+        opt_signer_address: Optional[str],
+    ) -> str:
         signer_address = opt_signer_address or self.web3.eth.defaultAccount
         if not signer_address:
             raise ValueError(
@@ -52,42 +50,39 @@ class SignWithWeb3(Signer):
             signer_address,
             eip712_message,
         )
-        typed_signature = util.create_typed_signature(
+        return util.create_typed_signature(
             raw_signature.hex(),
             SIGNATURE_TYPE_NO_PREPEND,
         )
-        return typed_signature
 
 
 class SignWithKey(Signer):
+    """Sign messages using a raw Ethereum private key."""
 
-    def __init__(self, private_key):
-        self.address = eth_account.Account.from_key(private_key).address
+    def __init__(self, private_key: str) -> None:
+        self.address: str = eth_account.Account.from_key(private_key).address
         self._private_key = private_key
 
     def sign(
         self,
-        eip712_message,  # Ignored.
-        message_hash,
-        opt_signer_address,
-    ):
+        eip712_message: Dict[str, Any],  # Ignored when signing with key.
+        message_hash: bytes,
+        opt_signer_address: Optional[str],
+    ) -> str:
         if (
-            opt_signer_address is not None and
-            opt_signer_address != self.address
+            opt_signer_address is not None
+            and opt_signer_address != self.address
         ):
             raise ValueError(
-                'signer_address is {} but Ethereum key (eth_private_key / '
-                'web3_account) corresponds to address {}'.format(
-                    opt_signer_address,
-                    self.address,
-                ),
+                f'signer_address is {opt_signer_address} but Ethereum key '
+                f'(eth_private_key / web3_account) corresponds to address '
+                f'{self.address}',
             )
         signed_message = eth_account.Account._sign_hash(
             message_hash.hex(),
             self._private_key,
         )
-        typed_signature = util.create_typed_signature(
+        return util.create_typed_signature(
             signed_message.signature.hex(),
             SIGNATURE_TYPE_NO_PREPEND,
         )
-        return typed_signature

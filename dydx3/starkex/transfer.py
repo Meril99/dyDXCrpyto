@@ -1,5 +1,10 @@
-from collections import namedtuple
+"""Signable transfer for STARK-signed L2 transfers."""
+
+from __future__ import annotations
+
 import math
+from collections import namedtuple
+from typing import Union
 
 from dydx3.constants import COLLATERAL_ASSET
 from dydx3.constants import COLLATERAL_ASSET_ID_BY_NETWORK_ID
@@ -21,37 +26,32 @@ StarkwareTransfer = namedtuple(
         'receiver_position_id',
         'receiver_public_key',
         'quantums_amount',
-        'nounce',
+        'nonce',
         'expiration_epoch_hours',
     ],
 )
 
 
 class SignableTransfer(Signable):
-    """
-    Wrapper object to convert a transfer, and hash, sign, and verify its
-    signature.
-    """
+    """Wrapper to convert a transfer, and hash, sign, and verify its signature."""
 
     def __init__(
         self,
-        sender_position_id,
-        receiver_position_id,
-        receiver_public_key,
-        human_amount,
-        client_id,
-        expiration_epoch_seconds,
-        network_id,
-    ):
-        nounce = nonce_from_client_id(client_id)
+        sender_position_id: Union[str, int],
+        receiver_position_id: Union[str, int],
+        receiver_public_key: Union[str, int],
+        human_amount: Union[str, int, float],
+        client_id: str,
+        expiration_epoch_seconds: Union[str, int, float],
+        network_id: int,
+    ) -> None:
+        nonce = nonce_from_client_id(client_id)
 
-        # The transfer asset is always the collateral asset.
         quantums_amount = to_quantums_exact(
             human_amount,
             COLLATERAL_ASSET,
         )
 
-        # Convert to a Unix timestamp (in hours).
         expiration_epoch_hours = math.ceil(
             float(expiration_epoch_seconds) / ONE_HOUR_IN_SECONDS,
         )
@@ -67,19 +67,17 @@ class SignableTransfer(Signable):
             receiver_position_id=int(receiver_position_id),
             receiver_public_key=receiver_public_key,
             quantums_amount=quantums_amount,
-            nounce=nounce,
-            expiration_epoch_hours=expiration_epoch_hours
+            nonce=nonce,
+            expiration_epoch_hours=expiration_epoch_hours,
         )
 
-        super(SignableTransfer, self).__init__(network_id, message)
+        super().__init__(network_id, message)
 
-    def to_starkware(self):
+    def to_starkware(self) -> StarkwareTransfer:
         return self._message
 
-    def _calculate_hash(self):
-        """Calculate the hash of the Starkware order."""
-        # TODO: Check values are in bounds
-
+    def _calculate_hash(self) -> int:
+        """Calculate the hash of the Starkware transfer."""
         asset_ids = get_hash(
             COLLATERAL_ASSET_ID_BY_NETWORK_ID[self.network_id],
             TRANSFER_FEE_ASSET_ID,
@@ -96,7 +94,7 @@ class SignableTransfer(Signable):
         part2 <<= TRANSFER_FIELD_BIT_LENGTHS['position_id']
         part2 += self._message.sender_position_id
         part2 <<= TRANSFER_FIELD_BIT_LENGTHS['nonce']
-        part2 += self._message.nounce
+        part2 += self._message.nonce
 
         part3 = TRANSFER_PREFIX
         part3 <<= TRANSFER_FIELD_BIT_LENGTHS['quantums_amount']
@@ -108,9 +106,6 @@ class SignableTransfer(Signable):
         part3 <<= TRANSFER_PADDING_BITS
 
         return get_hash(
-            get_hash(
-                part1,
-                part2,
-            ),
+            get_hash(part1, part2),
             part3,
         )

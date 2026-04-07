@@ -1,21 +1,27 @@
+"""Ethereum-authenticated private API module for API key management."""
+
+from __future__ import annotations
+
+from typing import Any, Dict, Optional
+
 from dydx3.helpers.request_helpers import generate_now_iso
 from dydx3.helpers.request_helpers import generate_query_path
 from dydx3.helpers.request_helpers import json_stringify
 from dydx3.eth_signing import SignEthPrivateAction
-from dydx3.helpers.requests import request
+from dydx3.helpers.requests import Response, request
 
 
-class EthPrivate(object):
-    """Module for adding/deleting API keys and recovery."""
+class EthPrivate:
+    """Module for managing API keys and recovery via Ethereum key auth."""
 
     def __init__(
         self,
-        host,
-        eth_signer,
-        network_id,
-        default_address,
-        api_timeout,
-    ):
+        host: str,
+        eth_signer: Any,
+        network_id: int,
+        default_address: Optional[str],
+        api_timeout: int,
+    ) -> None:
         self.host = host
         self.default_address = default_address
         self.api_timeout = api_timeout
@@ -26,14 +32,16 @@ class EthPrivate(object):
 
     def _request(
         self,
-        method,
-        endpoint,
-        opt_ethereum_address,
-        data={}
-    ):
+        method: str,
+        endpoint: str,
+        opt_ethereum_address: Optional[str],
+        data: Optional[Dict[str, Any]] = None,
+    ) -> Response:
+        if data is None:
+            data = {}
         ethereum_address = opt_ethereum_address or self.default_address
 
-        request_path = '/'.join(['/v3', endpoint])
+        request_path = f'/v3/{endpoint}'
         timestamp = generate_now_iso()
         signature = self.signer.sign(
             ethereum_address,
@@ -57,113 +65,72 @@ class EthPrivate(object):
 
     def _post(
         self,
-        endpoint,
-        opt_ethereum_address,
-    ):
-        return self._request(
-            'post',
-            endpoint,
-            opt_ethereum_address,
-        )
+        endpoint: str,
+        opt_ethereum_address: Optional[str],
+    ) -> Response:
+        return self._request('post', endpoint, opt_ethereum_address)
 
     def _delete(
         self,
-        endpoint,
-        opt_ethereum_address,
-        params={},
-    ):
-        url = generate_query_path(endpoint, params)
-        return self._request(
-            'delete',
-            url,
-            opt_ethereum_address,
-        )
+        endpoint: str,
+        opt_ethereum_address: Optional[str],
+        params: Optional[Dict[str, Any]] = None,
+    ) -> Response:
+        url = generate_query_path(endpoint, params or {})
+        return self._request('delete', url, opt_ethereum_address)
 
     def _get(
         self,
-        endpoint,
-        opt_ethereum_address,
-        params={},
-    ):
-        url = generate_query_path(endpoint, params)
-        return self._request(
-            'get',
-            url,
-            opt_ethereum_address,
-        )
+        endpoint: str,
+        opt_ethereum_address: Optional[str],
+        params: Optional[Dict[str, Any]] = None,
+    ) -> Response:
+        url = generate_query_path(endpoint, params or {})
+        return self._request('get', url, opt_ethereum_address)
 
-# ============ Requests ============
+    # ============ Requests ============
 
     def create_api_key(
         self,
-        ethereum_address=None,
-    ):
-        '''
-        Register an API key.
+        ethereum_address: Optional[str] = None,
+    ) -> Response:
+        """Register an API key.
 
-        :param ethereum_address: optional
-        :type ethereum_address: str
-
-        :returns: Object containing an apiKey
-
+        :param ethereum_address: Optional Ethereum address.
+        :returns: Object containing an apiKey.
         :raises: DydxAPIError
-        '''
-        return self._post(
-            'api-keys',
-            ethereum_address,
-        )
+        """
+        return self._post('api-keys', ethereum_address)
 
     def delete_api_key(
         self,
-        api_key,
-        ethereum_address=None,
-    ):
-        '''
-        Delete an API key.
+        api_key: str,
+        ethereum_address: Optional[str] = None,
+    ) -> Response:
+        """Delete an API key.
 
-        :param api_key: required
-        :type api_key: str
-
-        :param ethereum_address: optional
-        :type ethereum_address: str
-
+        :param api_key: The API key to delete.
+        :param ethereum_address: Optional Ethereum address.
         :returns: None
-
         :raises: DydxAPIError
-        '''
+        """
         return self._delete(
             'api-keys',
             ethereum_address,
-            {
-                'apiKey': api_key,
-            },
+            {'apiKey': api_key},
         )
 
     def recovery(
         self,
-        ethereum_address=None
-    ):
-        '''
-        This is for if you can't recover your starkKey or apiKey and need an
-        additional way to get your starkKey and balance on our exchange,
-        both of which are needed to call the L1 solidity function needed to
-        recover your funds.
+        ethereum_address: Optional[str] = None,
+    ) -> Response:
+        """Recover STARK key and balance information.
 
-        :param ethereum_address: optional
-        :type ethereum_address: str
+        Use this if you can't recover your starkKey or apiKey and need
+        to call the L1 solidity function for fund recovery.
 
-        :returns: {
-            starkKey: str,
-            positionId: str,
-            equity: str,
-            freeCollateral: str,
-            quoteBalance: str,
-            positions: array of open positions
-        }
-
+        :param ethereum_address: Optional Ethereum address.
+        :returns: Recovery information including starkKey, positionId, etc.
         :raises: DydxAPIError
-        '''
-        return self._get(
-            'recovery',
-            ethereum_address,
-        )
+        """
+        return self._get('recovery', ethereum_address)

@@ -1,6 +1,11 @@
-import hmac
-import hashlib
+"""Private API module — requires API key authentication."""
+
+from __future__ import annotations
+
 import base64
+import hashlib
+import hmac
+from typing import Any, Dict, Optional, Union
 
 from dydx3.constants import COLLATERAL_ASSET
 from dydx3.constants import COLLATERAL_TOKEN_DECIMALS
@@ -16,7 +21,7 @@ from dydx3.helpers.request_helpers import random_client_id
 from dydx3.helpers.request_helpers import iso_to_epoch_seconds
 from dydx3.helpers.request_helpers import json_stringify
 from dydx3.helpers.request_helpers import remove_nones
-from dydx3.helpers.requests import request
+from dydx3.helpers.requests import Response, request
 from dydx3.starkex.helpers import get_transfer_erc20_fact
 from dydx3.starkex.helpers import nonce_from_client_id
 from dydx3.starkex.order import SignableOrder
@@ -25,17 +30,18 @@ from dydx3.starkex.conditional_transfer import SignableConditionalTransfer
 from dydx3.starkex.transfer import SignableTransfer
 
 
-class Private(object):
+class Private:
+    """Client module for private (API key authenticated) endpoints."""
 
     def __init__(
         self,
-        host,
-        network_id,
-        stark_private_key,
-        default_address,
-        api_timeout,
-        api_key_credentials,
-    ):
+        host: str,
+        network_id: int,
+        stark_private_key: Optional[str],
+        default_address: Optional[str],
+        api_timeout: int,
+        api_key_credentials: Dict[str, str],
+    ) -> None:
         self.host = host
         self.network_id = network_id
         self.stark_private_key = stark_private_key
@@ -47,12 +53,14 @@ class Private(object):
 
     def _private_request(
         self,
-        method,
-        endpoint,
-        data={},
-    ):
+        method: str,
+        endpoint: str,
+        data: Optional[Dict[str, Any]] = None,
+    ) -> Response:
+        if data is None:
+            data = {}
         now_iso_string = generate_now_iso()
-        request_path = '/'.join(['/v3', endpoint])
+        request_path = f'/v3/{endpoint}'
         signature = self.sign(
             request_path=request_path,
             method=method.upper(),
@@ -73,27 +81,19 @@ class Private(object):
             self.api_timeout,
         )
 
-    def _get(self, endpoint, params):
+    def _get(self, endpoint: str, params: Dict[str, Any]) -> Response:
         return self._private_request(
             'get',
             generate_query_path(endpoint, params),
         )
 
-    def _post(self, endpoint, data):
-        return self._private_request(
-            'post',
-            endpoint,
-            data
-        )
+    def _post(self, endpoint: str, data: Dict[str, Any]) -> Response:
+        return self._private_request('post', endpoint, data)
 
-    def _put(self, endpoint, data):
-        return self._private_request(
-            'put',
-            endpoint,
-            data
-        )
+    def _put(self, endpoint: str, data: Dict[str, Any]) -> Response:
+        return self._private_request('put', endpoint, data)
 
-    def _delete(self, endpoint, params):
+    def _delete(self, endpoint: str, params: Dict[str, Any]) -> Response:
         return self._private_request(
             'delete',
             generate_query_path(endpoint, params),
@@ -101,80 +101,52 @@ class Private(object):
 
     # ============ Requests ============
 
-    def get_api_keys(
-        self,
-    ):
-        '''
-        Get API keys.
+    def get_api_keys(self) -> Response:
+        """Get API keys.
 
-        :returns: Object containing an array of apiKeys
-
+        :returns: Object containing an array of apiKeys.
         :raises: DydxAPIError
-        '''
-        return self._get(
-            'api-keys',
-            {},
-        )
+        """
+        return self._get('api-keys', {})
 
-    def get_registration(self):
-        '''
-        Get signature for registration
+    def get_registration(self) -> Response:
+        """Get signature for registration.
 
         :returns: str
-
         :raises: DydxAPIError
-        '''
-
+        """
         return self._get('registration', {})
 
-    def get_user(self):
-        '''
-        Get user information
+    def get_user(self) -> Response:
+        """Get user information.
 
         :returns: User
-
         :raises: DydxAPIError
-        '''
+        """
         return self._get('users', {})
 
     def update_user(
         self,
-        user_data={},
-        email=None,
-        username=None,
-        is_sharing_username=None,
-        is_sharing_address=None,
-        country=None,
-        language_code=None,
-    ):
-        '''
-        Update user information
+        user_data: Optional[Dict[str, Any]] = None,
+        email: Optional[str] = None,
+        username: Optional[str] = None,
+        is_sharing_username: Optional[bool] = None,
+        is_sharing_address: Optional[bool] = None,
+        country: Optional[str] = None,
+        language_code: Optional[str] = None,
+    ) -> Response:
+        """Update user information.
 
-        :param user_data: optional
-        :type user_data: dict
-
-        :param email: optional
-        :type email: str
-
-        :param username: optional
-        :type username: str
-
-        :param is_sharing_username: optional
-        :type is_sharing_username: str
-
-        :param is_sharing_address: optional
-        :type is_sharing_address: str
-
-        :param country optional
-        :type country: str (ISO 3166-1 Alpha-2)
-
-        :param language_code optional
-        :type language_code: str (ISO 639-1, including 'zh-CN')
-
+        :param user_data: Optional user data dict.
+        :param email: Optional email address.
+        :param username: Optional username.
+        :param is_sharing_username: Optional sharing preference.
+        :param is_sharing_address: Optional sharing preference.
+        :param country: Optional ISO 3166-1 Alpha-2 country code.
+        :param language_code: Optional ISO 639-1 language code.
         :returns: User
-
         :raises: DydxAPIError
-        '''
+        """
         return self._put(
             'users',
             {
@@ -182,109 +154,73 @@ class Private(object):
                 'username': username,
                 'isSharingUsername': is_sharing_username,
                 'isSharingAddress': is_sharing_address,
-                'userData': json_stringify(user_data),
+                'userData': json_stringify(user_data or {}),
                 'country': country,
             },
         )
 
     def create_account(
         self,
-        stark_public_key,
-        stark_public_key_y_coordinate,
-    ):
-        '''
-        Make an account
+        stark_public_key: str,
+        stark_public_key_y_coordinate: str,
+    ) -> Response:
+        """Create an account.
 
-        :param stark_public_key: required
-        :type stark_public_key: str
-
-        :param stark_public_key_y_coordinate: required
-        :type stark_public_key_y_coordinate: str
-
+        :param stark_public_key: STARK public key.
+        :param stark_public_key_y_coordinate: STARK public key Y coordinate.
         :returns: Account
-
         :raises: DydxAPIError
-        '''
+        """
         return self._post(
             'accounts',
             {
                 'starkKey': stark_public_key,
                 'starkKeyYCoordinate': stark_public_key_y_coordinate,
-            }
+            },
         )
 
     def get_account(
         self,
-        ethereum_address=None,
-    ):
-        '''
-        Get an account
+        ethereum_address: Optional[str] = None,
+    ) -> Response:
+        """Get an account.
 
-        :param ethereum_address: optional
-        :type ethereum_address: str
-
+        :param ethereum_address: Optional Ethereum address.
         :returns: Account
-
         :raises: DydxAPIError
-        '''
+        """
         address = ethereum_address or self.default_address
         if address is None:
             raise ValueError('ethereum_address was not set')
         return self._get(
-            '/'.join(['accounts', get_account_id(address)]),
+            f'accounts/{get_account_id(address)}',
             {},
         )
 
-    def get_accounts(
-        self,
-    ):
-        '''
-        Get accounts
+    def get_accounts(self) -> Response:
+        """Get all accounts for the user.
 
-        :returns: Array of accounts for a user
-
+        :returns: Array of accounts.
         :raises: DydxAPIError
-        '''
-        return self._get(
-            'accounts',
-            {},
-        )
+        """
+        return self._get('accounts', {})
 
     def get_positions(
         self,
-        market=None,
-        status=None,
-        limit=None,
-        created_before_or_at=None,
-    ):
-        '''
-        Get positions
+        market: Optional[str] = None,
+        status: Optional[str] = None,
+        limit: Optional[str] = None,
+        created_before_or_at: Optional[str] = None,
+    ) -> Response:
+        """Get positions.
 
-        :param market: optional
-        :type market: str in list [
-            "BTC-USD",
-            "ETH-USD",
-            "LINK-USD",
-            ...
-        ]
-
-        :param status: optional
-        :type status: str in list [
-            "OPEN",
-            "CLOSED",
-            "LIQUIDATED",
-        ]
-
-        :param limit: optional
-        :type limit: str
-
-        :param created_before_or_at: optional
-        :type created_before_or_at: ISO str
-
-        :returns: Array of positions
-
+        :param market: Optional market filter (e.g. "BTC-USD").
+        :param status: Optional status filter ("OPEN", "CLOSED", "LIQUIDATED").
+        :param limit: Optional max results.
+        :param created_before_or_at: Optional ISO timestamp filter.
+        :returns: Array of positions.
         :raises: DydxAPIError
-        '''
+        """
         return self._get(
             'positions',
             {
@@ -297,61 +233,26 @@ class Private(object):
 
     def get_orders(
         self,
-        market=None,
-        status=None,
-        side=None,
-        order_type=None,
-        limit=None,
-        created_before_or_at=None,
-        returnLatestOrders=None,
-    ):
-        '''
-        Get orders
+        market: Optional[str] = None,
+        status: Optional[str] = None,
+        side: Optional[str] = None,
+        order_type: Optional[str] = None,
+        limit: Optional[str] = None,
+        created_before_or_at: Optional[str] = None,
+        return_latest_orders: Optional[bool] = None,
+    ) -> Response:
+        """Get orders.
 
-        :param market: optional
-        :type market: str in list [
-            "BTC-USD",
-            "ETH-USD",
-            "LINK-USD",
-            ...
-        ]
-
-        :param status: optional
-        :type status: str in list [
-            "PENDING",
-            "OPEN",
-            "FILLED",
-            "CANCELED",
-            "UNTRIGGERED",
-        ]
-
-        :param side: optional
-        :type side: str in list [
-            "BUY",
-            "SELL",
-        ]
-
-        :param order_type: optional
-        :type order_type: str in list [
-            "LIMIT",
-            "STOP",
-            "TRAILING_STOP",
-            "TAKE_PROFIT",
-        ]
-
-        :param limit: optional
-        :type limit: str
-
-        :param created_before_or_at: optional
-        :type created_before_or_at: ISO str
-
-        :param returnLatestOrders: optional
-        :type returnLatestOrders: boolean
-
-        :returns: Array of Orders
-
+        :param market: Optional market filter.
+        :param status: Optional status filter.
+        :param side: Optional side filter ("BUY" or "SELL").
+        :param order_type: Optional type filter ("LIMIT", "STOP", etc.).
+        :param limit: Optional max results.
+        :param created_before_or_at: Optional ISO timestamp filter.
+        :param return_latest_orders: Optional flag to return latest orders.
+        :returns: Array of orders.
         :raises: DydxAPIError
-        '''
+        """
         return self._get(
             'orders',
             {
@@ -361,182 +262,89 @@ class Private(object):
                 'type': order_type,
                 'limit': limit,
                 'createdBeforeOrAt': created_before_or_at,
-                'returnLatestOrders': returnLatestOrders,
+                'returnLatestOrders': return_latest_orders,
             },
         )
 
     def get_active_orders(
         self,
-        market,
-        side=None,
-        id=None,
-    ):
-        '''
-        Get ActiveOrders
+        market: str,
+        side: Optional[str] = None,
+        id: Optional[str] = None,
+    ) -> Response:
+        """Get active orders.
 
-        :param market: required
-        :type market: str in list [
-            "BTC-USD",
-            "ETH-USD",
-            "LINK-USD",
-            ...
-        ]
-
-        :param side: optional (required if id is passed in)
-        :type side: str in list [
-            "BUY",
-            "SELL",
-        ]
-
-        param id: optional
-        :type id: str
-
-        :returns: Array of ActiveOrders
-
+        :param market: Market identifier.
+        :param side: Optional side filter (required if id is passed).
+        :param id: Optional order ID.
+        :returns: Array of active orders.
         :raises: DydxAPIError
-        '''
+        """
         return self._get(
             'active-orders',
-            {
-                'market': market,
-                'side': side,
-                'id': id,
-            },
+            {'market': market, 'side': side, 'id': id},
         )
 
-    def get_order_by_id(
-        self,
-        order_id,
-    ):
-        '''
-        Get order by its id
+    def get_order_by_id(self, order_id: str) -> Response:
+        """Get an order by its ID.
 
-        :param order_id: required
-        :type order_id: str
-
+        :param order_id: The order ID.
         :returns: Order
-
         :raises: DydxAPIError
-        '''
-        return self._get(
-            '/'.join(['orders', order_id]),
-            {},
-        )
+        """
+        return self._get(f'orders/{order_id}', {})
 
-    def get_order_by_client_id(
-        self,
-        client_id,
-    ):
-        '''
-        Get order by its client_id
+    def get_order_by_client_id(self, client_id: str) -> Response:
+        """Get an order by its client ID.
 
-        :param client_id: required
-        :type client_id: str
-
+        :param client_id: The client-assigned order ID.
         :returns: Order
-
         :raises: DydxAPIError
-        '''
-        return self._get(
-            '/'.join(['orders/client', client_id]),
-            {},
-        )
+        """
+        return self._get(f'orders/client/{client_id}', {})
 
     def create_order(
         self,
-        position_id,
-        market,
-        side,
-        order_type,
-        post_only,
-        size,
-        price,
-        limit_fee,
-        time_in_force=None,
-        cancel_id=None,
-        trigger_price=None,
-        trailing_percent=None,
-        client_id=None,
-        expiration=None,
-        expiration_epoch_seconds=None,
-        signature=None,
-        reduce_only=None
-    ):
-        '''
-        Post an order
+        position_id: Union[str, int],
+        market: str,
+        side: str,
+        order_type: str,
+        post_only: bool,
+        size: str,
+        price: str,
+        limit_fee: str,
+        time_in_force: Optional[str] = None,
+        cancel_id: Optional[str] = None,
+        trigger_price: Optional[str] = None,
+        trailing_percent: Optional[str] = None,
+        client_id: Optional[str] = None,
+        expiration: Optional[str] = None,
+        expiration_epoch_seconds: Optional[int] = None,
+        signature: Optional[str] = None,
+        reduce_only: Optional[bool] = None,
+    ) -> Response:
+        """Post an order.
 
-        :param position_id: required
-        :type position_id: str or int
-
-        :param market: required
-        :type market: str in list [
-            "BTC-USD",
-            "ETH-USD",
-            "LINK-USD",
-            ...
-        ]
-
-        :param side: required
-        :type side: str in list[
-            "BUY",
-            "SELL",
-        ],
-
-        :param order_type: required
-        :type order_type: str in list [
-            "LIMIT",
-            "STOP",
-            "TRAILING_STOP",
-            "TAKE_PROFIT",
-        ]
-
-        :param post_only: required
-        :type post_only: bool
-
-        :param size: required
-        :type size: str
-
-        :param price: required
-        :type price: str
-
-        :param limit_fee: required
-        :type limit_fee: str
-
-        :param time_in_force: optional
-        :type time_in_force: str in list [
-            "GTT",
-            "FOK",
-            "IOC",
-        ]
-
-        :param cancel_id: optional
-        :type cancel_id: str
-
-        :param trigger_price: optional
-        :type trigger_price: Decimal
-
-        :param trailing_percent: optional
-        :type trailing_percent: Decimal
-
-        :param client_id: optional
-        :type client_id: str
-
-        :param expiration: optional
-        :type expiration: ISO str
-
-        :param expiration_epoch_seconds: optional
-        :type expiration_epoch_seconds: int
-
-        :param signature: optional
-        type signature: str
-
-        :param reduce_only: optional
-        type reduce_only: bool
-
+        :param position_id: Position ID.
+        :param market: Market (e.g. "BTC-USD").
+        :param side: "BUY" or "SELL".
+        :param order_type: "LIMIT", "STOP", "TRAILING_STOP", "TAKE_PROFIT".
+        :param post_only: Whether the order is post-only.
+        :param size: Order size.
+        :param price: Order price.
+        :param limit_fee: Maximum fee as a fraction (e.g. "0.01" for 1%).
+        :param time_in_force: Optional ("GTT", "FOK", "IOC").
+        :param cancel_id: Optional order ID to cancel.
+        :param trigger_price: Optional trigger price.
+        :param trailing_percent: Optional trailing percent.
+        :param client_id: Optional client-assigned ID.
+        :param expiration: Optional expiration as ISO string.
+        :param expiration_epoch_seconds: Optional expiration as epoch seconds.
+        :param signature: Optional pre-computed STARK signature.
+        :param reduce_only: Optional reduce-only flag.
         :returns: Order
-
         :raises: DydxAPIError
-        '''
+        """
         client_id = client_id or random_client_id()
         if bool(expiration) == bool(expiration_epoch_seconds):
             raise ValueError(
@@ -553,8 +361,8 @@ class Private(object):
         order_signature = signature
         if not order_signature:
             if not self.stark_private_key:
-                raise Exception(
-                    'No signature provided and client was not ' +
+                raise ValueError(
+                    'No signature provided and client was not '
                     'initialized with stark_private_key'
                 )
             order_to_sign = SignableOrder(
@@ -588,125 +396,65 @@ class Private(object):
             'reduceOnly': reduce_only,
         }
 
-        return self._post(
-            'orders',
-            order,
-        )
+        return self._post('orders', order)
 
-    def cancel_order(
-        self,
-        order_id,
-    ):
-        '''
-        Cancel an order
+    def cancel_order(self, order_id: str) -> Response:
+        """Cancel an order.
 
-        :param order_id: required
-        :type order_id: str
-
+        :param order_id: The order ID to cancel.
         :returns: Order
-
         :raises: DydxAPIError
-        '''
-        return self._delete(
-            '/'.join(['orders', order_id]),
-            {},
-        )
+        """
+        return self._delete(f'orders/{order_id}', {})
 
     def cancel_all_orders(
         self,
-        market=None,
-    ):
-        '''
-        Cancel all orders
+        market: Optional[str] = None,
+    ) -> Response:
+        """Cancel all orders, optionally filtered by market.
 
-        :param market: optional
-        :type market: str in list [
-            "BTC-USD",
-            "ETH-USD",
-            "LINK-USD",
-            ...
-        ]
-
-        :returns: Array of orders
-
+        :param market: Optional market filter.
+        :returns: Array of cancelled orders.
         :raises: DydxAPIError
-        '''
+        """
         params = {'market': market} if market else {}
-        return self._delete(
-            'orders',
-            params,
-        )
+        return self._delete('orders', params)
 
     def cancel_active_orders(
         self,
-        market,
-        side=None,
-        id=None,
-    ):
-        '''
-        Cancel ActiveOrders
+        market: str,
+        side: Optional[str] = None,
+        id: Optional[str] = None,
+    ) -> Response:
+        """Cancel active orders.
 
-        :param market: required
-        :type market: str in list [
-            "BTC-USD",
-            "ETH-USD",
-            "LINK-USD",
-            ...
-        ]
-
-        :param side: optional (required if id is passed in)
-        :type side: str in list [
-            "BUY",
-            "SELL",
-        ]
-
-        param id: optional
-        :type id: str
-
-        :returns: Array of ActiveOrders
-
+        :param market: Market identifier.
+        :param side: Optional side filter (required if id is passed).
+        :param id: Optional order ID.
+        :returns: Array of cancelled active orders.
         :raises: DydxAPIError
-        '''
+        """
         return self._delete(
             'active-orders',
-            {
-                'market': market,
-                'side': side,
-                'id': id,
-            },
+            {'market': market, 'side': side, 'id': id},
         )
 
     def get_fills(
         self,
-        market=None,
-        order_id=None,
-        limit=None,
-        created_before_or_at=None,
-    ):
-        '''
-        Get fills
+        market: Optional[str] = None,
+        order_id: Optional[str] = None,
+        limit: Optional[str] = None,
+        created_before_or_at: Optional[str] = None,
+    ) -> Response:
+        """Get fills.
 
-        :param market: optional
-        :type market: str in list [
-            "BTC-USD",
-            "ETH-USD",
-            "LINK-USD",
-            ...
-        ]
-
-        :param order_id: optional
-        :type order_id: str
-
-        :param limit: optional
-        :type limit: str
-
-        :param created_before_or_at: optional
-        :type created_before_or_at: ISO str
-
-        :returns: Array of fills
-
+        :param market: Optional market filter.
+        :param order_id: Optional order ID filter.
+        :param limit: Optional max results.
+        :param created_before_or_at: Optional ISO timestamp filter.
+        :returns: Array of fills.
         :raises: DydxAPIError
-        '''
+        """
         return self._get(
             'fills',
             {
@@ -714,35 +462,23 @@ class Private(object):
                 'orderId': order_id,
                 'limit': limit,
                 'createdBeforeOrAt': created_before_or_at,
-            }
+            },
         )
 
     def get_transfers(
         self,
-        transfer_type=None,
-        limit=None,
-        created_before_or_at=None,
-    ):
-        '''
-        Get transfers
+        transfer_type: Optional[str] = None,
+        limit: Optional[str] = None,
+        created_before_or_at: Optional[str] = None,
+    ) -> Response:
+        """Get transfers.
 
-        :param transfer_type: optional
-        :type transfer_type: str in list [
-            "DEPOSIT",
-            "WITHDRAWAL",
-            "FAST_WITHDRAWAL",
-        ]
-
-        :param limit: optional
-        :type limit: str
-
-        :param created_before_or_at: optional
-        :type created_before_or_at: ISO str
-
-        :returns: Array of transfers
-
+        :param transfer_type: Optional type filter ("DEPOSIT", "WITHDRAWAL", etc.).
+        :param limit: Optional max results.
+        :param created_before_or_at: Optional ISO timestamp filter.
+        :returns: Array of transfers.
         :raises: DydxAPIError
-        '''
+        """
         return self._get(
             'transfers',
             {
@@ -754,51 +490,28 @@ class Private(object):
 
     def create_withdrawal(
         self,
-        position_id,
-        amount,
-        asset,
-        to_address,
-        client_id=None,
-        expiration=None,
-        expiration_epoch_seconds=None,
-        signature=None,
-    ):
-        '''
-        Post a withdrawal
+        position_id: Union[str, int],
+        amount: str,
+        asset: str,
+        to_address: str,
+        client_id: Optional[str] = None,
+        expiration: Optional[str] = None,
+        expiration_epoch_seconds: Optional[int] = None,
+        signature: Optional[str] = None,
+    ) -> Response:
+        """Post a withdrawal.
 
-        :param position_id: required
-        :type position_id: int or str
-
-        :param amount: required
-        :type amount: str
-
-        :param asset: required
-        :type asset: str in list [
-            "ETH",
-            "LINK",
-            "BTC",
-            "USDC",
-            "USDT",
-            "USD",
-            ...
-        ]
-
-        :param client_id: optional
-        :type client_id: str
-
-        :param expiration: optional
-        :type expiration: ISO str
-
-        :param expiration_epoch_seconds: optional
-        :type expiration_epoch_seconds: int
-
-        :param signature: optional
-        :type signature: str
-
+        :param position_id: Position ID.
+        :param amount: Withdrawal amount.
+        :param asset: Asset type (e.g. "USDC").
+        :param to_address: Destination Ethereum address.
+        :param client_id: Optional client-assigned ID.
+        :param expiration: Optional expiration as ISO string.
+        :param expiration_epoch_seconds: Optional expiration as epoch seconds.
+        :param signature: Optional pre-computed STARK signature.
         :returns: Transfer
-
         :raises: DydxAPIError
-        '''
+        """
         client_id = client_id or random_client_id()
         if bool(expiration) == bool(expiration_epoch_seconds):
             raise ValueError(
@@ -814,8 +527,8 @@ class Private(object):
 
         if not signature:
             if not self.stark_private_key:
-                raise Exception(
-                    'No signature provided and client was not' +
+                raise ValueError(
+                    'No signature provided and client was not '
                     'initialized with stark_private_key'
                 )
             withdrawal_to_sign = SignableWithdrawal(
@@ -838,50 +551,30 @@ class Private(object):
 
     def create_transfer(
         self,
-        amount,
-        position_id,
-        receiver_account_id,
-        receiver_public_key,
-        receiver_position_id,
-        client_id=None,
-        expiration=None,
-        expiration_epoch_seconds=None,
-        signature=None,
-    ):
-        '''
-        Create a L2 transfer.
+        amount: str,
+        position_id: Union[str, int],
+        receiver_account_id: str,
+        receiver_public_key: str,
+        receiver_position_id: Union[str, int],
+        client_id: Optional[str] = None,
+        expiration: Optional[str] = None,
+        expiration_epoch_seconds: Optional[int] = None,
+        signature: Optional[str] = None,
+    ) -> Response:
+        """Create a L2 transfer.
 
-        :param amount: required
-        :type amount: str
-
-        :param position_id: required
-        :type position_id: int or str
-
-        :param receiver_account_id: required
-        :type receiver_account_id: str
-
-        :param receiver_public_key: required
-        :type receiver_public_key: str
-
-        :param receiver_position_id: required
-        :type receiver_position_id: int or str
-
-        :param client_id: optional
-        :type client_id: str
-
-        :param expiration: optional
-        :type expiration: ISO str
-
-        :param expiration_epoch_seconds: optional
-        :type expiration_epoch_seconds: int
-
-        :param signature: optional
-        :type signature: str
-
+        :param amount: Transfer amount.
+        :param position_id: Sender position ID.
+        :param receiver_account_id: Receiver account ID.
+        :param receiver_public_key: Receiver STARK public key.
+        :param receiver_position_id: Receiver position ID.
+        :param client_id: Optional client-assigned ID.
+        :param expiration: Optional expiration as ISO string.
+        :param expiration_epoch_seconds: Optional expiration as epoch seconds.
+        :param signature: Optional pre-computed STARK signature.
         :returns: Transfer
-
         :raises: DydxAPIError
-        '''
+        """
         client_id = client_id or random_client_id()
 
         if bool(expiration) == bool(expiration_epoch_seconds):
@@ -899,9 +592,9 @@ class Private(object):
         transfer_signature = signature
         if not transfer_signature:
             if not self.stark_private_key:
-                raise Exception(
-                    'No signature provided and client was not'
-                    + 'initialized with stark_private_key'
+                raise ValueError(
+                    'No signature provided and client was not '
+                    'initialized with stark_private_key'
                 )
             transfer_to_sign = SignableTransfer(
                 network_id=self.network_id,
@@ -925,65 +618,36 @@ class Private(object):
 
     def create_fast_withdrawal(
         self,
-        position_id,
-        credit_asset,
-        credit_amount,
-        debit_amount,
-        to_address,
-        lp_position_id,
-        lp_stark_public_key,
-        slippage_tolerance=None,
-        client_id=None,
-        expiration=None,
-        expiration_epoch_seconds=None,
-        signature=None,
-    ):
-        '''
-        Post a fast withdrawal
+        position_id: Union[str, int],
+        credit_asset: str,
+        credit_amount: Union[str, int],
+        debit_amount: Union[str, int],
+        to_address: str,
+        lp_position_id: Union[str, int],
+        lp_stark_public_key: str,
+        slippage_tolerance: Optional[str] = None,
+        client_id: Optional[str] = None,
+        expiration: Optional[str] = None,
+        expiration_epoch_seconds: Optional[int] = None,
+        signature: Optional[str] = None,
+    ) -> Response:
+        """Post a fast withdrawal.
 
-        :param credit_asset: required
-        :type credit_asset: str in list [
-            "USDC",
-            "USDT",
-        ]
-
-        :param position_id: required
-        :type position_id: str or int
-
-        :param credit_amount: required
-        :type credit_amount: str or int
-
-        :param debit_amount: required
-        :type debit_amount: str or int
-
-        :param to_address: required
-        :type to_address: str
-
-        :param lp_position_id: required
-        :type lp_position_id: str or int
-
-        :param lp_stark_public_key: required
-        :type lp_stark_public_key: str
-
-        :param slippage_tolerance: optional
-        :type slippage_tolerance: str
-
-        :param client_id: optional
-        :type client_id: str
-
-        :param expiration: optional
-        :type expiration: ISO str
-
-        :param expiration_epoch_seconds: optional
-        :type expiration_epoch_seconds: int
-
-        :param signature: optional
-        :type signature: str
-
+        :param position_id: Position ID.
+        :param credit_asset: Credit asset ("USDC" or "USDT").
+        :param credit_amount: Credit amount.
+        :param debit_amount: Debit amount.
+        :param to_address: Destination Ethereum address.
+        :param lp_position_id: LP position ID.
+        :param lp_stark_public_key: LP STARK public key.
+        :param slippage_tolerance: Optional slippage tolerance.
+        :param client_id: Optional client-assigned ID.
+        :param expiration: Optional expiration as ISO string.
+        :param expiration_epoch_seconds: Optional expiration as epoch seconds.
+        :param signature: Optional pre-computed STARK signature.
         :returns: Transfer
-
         :raises: DydxAPIError
-        '''
+        """
         client_id = client_id or random_client_id()
         if bool(expiration) == bool(expiration_epoch_seconds):
             raise ValueError(
@@ -999,8 +663,8 @@ class Private(object):
 
         if not signature:
             if not self.stark_private_key:
-                raise Exception(
-                    'No signature provided and client was not' +
+                raise ValueError(
+                    'No signature provided and client was not '
                     'initialized with stark_private_key'
                 )
             fact = get_transfer_erc20_fact(
@@ -1030,7 +694,6 @@ class Private(object):
             'creditAmount': credit_amount,
             'debitAmount': debit_amount,
             'slippageTolerance': slippage_tolerance,
-            # TODO: Signature verification should work regardless of case.
             'toAddress': to_address.lower(),
             'lpPositionId': lp_position_id,
             'expiration': expiration,
@@ -1041,31 +704,18 @@ class Private(object):
 
     def get_funding_payments(
         self,
-        market=None,
-        limit=None,
-        effective_before_or_at=None,
-    ):
-        '''
-        Get funding payments
+        market: Optional[str] = None,
+        limit: Optional[str] = None,
+        effective_before_or_at: Optional[str] = None,
+    ) -> Response:
+        """Get funding payments.
 
-        :param market: optional
-        :type market: str in list [
-            "BTC-USD",
-            "ETH-USD",
-            "LINK-USD",
-            ...
-        ]
-
-        :param limit: optional
-        :type limit: str
-
-        :param effective_before_or_at: optional
-        :type effective_before_or_at: ISO str
-
-        :returns: Array of funding payments
-
+        :param market: Optional market filter.
+        :param limit: Optional max results.
+        :param effective_before_or_at: Optional ISO timestamp filter.
+        :returns: Array of funding payments.
         :raises: DydxAPIError
-        '''
+        """
         return self._get(
             'funding',
             {
@@ -1077,22 +727,16 @@ class Private(object):
 
     def get_historical_pnl(
         self,
-        created_before_or_at=None,
-        created_on_or_after=None,
-    ):
-        '''
-        Get historical pnl ticks
+        created_before_or_at: Optional[str] = None,
+        created_on_or_after: Optional[str] = None,
+    ) -> Response:
+        """Get historical PnL ticks.
 
-        :param created_before_or_at: optional
-        :type created_before_or_at: ISO str
-
-        :param created_on_or_after: optional
-        :type created_on_or_after: ISO str
-
-        :returns: Array of historical pnl ticks
-
+        :param created_before_or_at: Optional ISO timestamp filter.
+        :param created_on_or_after: Optional ISO timestamp filter.
+        :returns: Array of historical PnL ticks.
         :raises: DydxAPIError
-        '''
+        """
         return self._get(
             'historical-pnl',
             {
@@ -1101,200 +745,129 @@ class Private(object):
             },
         )
 
-    def send_verification_email(
-        self,
-    ):
-        '''
-        Send verification email
+    def send_verification_email(self) -> Response:
+        """Send verification email.
 
-        :returns: Empty object
-
+        :returns: Empty object.
         :raises: DydxAPIError
-        '''
-        return self._put(
-            'emails/send-verification-email',
-            {},
-        )
+        """
+        return self._put('emails/send-verification-email', {})
 
     def get_trading_rewards(
         self,
-        epoch=None,
-    ):
-        '''
-        Get trading rewards
+        epoch: Optional[int] = None,
+    ) -> Response:
+        """Get trading rewards.
 
-        :param epoch: optional
-        :type epoch: int
-
+        :param epoch: Optional epoch number.
         :returns: TradingRewards
-
         :raises: DydxAPIError
-        '''
-        return self._get(
-            'rewards/weight',
-            {
-                'epoch': epoch,
-            },
-        )
+        """
+        return self._get('rewards/weight', {'epoch': epoch})
 
     def get_liquidity_provider_rewards_v2(
         self,
-        epoch=None,
-    ):
-        '''
-        Get liquidity provider rewards
+        epoch: Optional[int] = None,
+    ) -> Response:
+        """Get liquidity provider rewards (v2).
 
-        :param epoch: optional
-        :type epoch: int
-
+        :param epoch: Optional epoch number.
         :returns: LiquidityProviderRewards
-
         :raises: DydxAPIError
-        '''
-        return self._get(
-            'rewards/liquidity-provider',
-            {
-                'epoch': epoch,
-            },
-        )
+        """
+        return self._get('rewards/liquidity-provider', {'epoch': epoch})
 
     def get_liquidity_provider_rewards(
         self,
-        epoch=None,
-    ):
-        '''
-        (Deprecated, please use get_liquidity_provider_rewards_v2)
-        Get liquidity rewards
+        epoch: Optional[int] = None,
+    ) -> Response:
+        """Get liquidity rewards (deprecated, use get_liquidity_provider_rewards_v2).
 
-        :param epoch: optional
-        :type epoch: int
-
+        :param epoch: Optional epoch number.
         :returns: LiquidityRewards
-
         :raises: DydxAPIError
-        '''
-        return self._get(
-            'rewards/liquidity',
-            {
-                'epoch': epoch,
-            },
-        )
+        """
+        return self._get('rewards/liquidity', {'epoch': epoch})
 
-    def get_retroactive_mining_rewards(
-        self,
-    ):
-        '''
-        Get retroactive mining rewards
+    def get_retroactive_mining_rewards(self) -> Response:
+        """Get retroactive mining rewards.
 
         :returns: RetroactiveMiningRewards
-
         :raises: DydxAPIError
-        '''
-        return self._get('rewards/retroactive-mining')
+        """
+        return self._get('rewards/retroactive-mining', {})
 
-    def request_testnet_tokens(
-        self,
-    ):
-        '''
-        Requests tokens on dYdX's staging server.
-        NOTE: this will not work on Mainnet/Production.
+    def request_testnet_tokens(self) -> Response:
+        """Request tokens on dYdX's staging server (Sepolia only).
 
         :returns: Transfer
-
-        :raises: DydxAPIError
-        '''
-        if (self.network_id != NETWORK_ID_SEPOLIA):
+        :raises: DydxAPIError, ValueError
+        """
+        if self.network_id != NETWORK_ID_SEPOLIA:
             raise ValueError('network_id is not Sepolia')
-
         return self._post('testnet/tokens', {})
 
-    def get_profile(
-        self,
-    ):
-        '''
-        Get Private Profile
+    def get_profile(self) -> Response:
+        """Get private profile.
 
         :returns: PrivateProfile
-
         :raises: DydxAPIError
-        '''
+        """
         return self._get('profile/private', {})
 
-    def get_user_links(
-        self,
-    ):
-        '''
-        Get Active Linked Users
+    def get_user_links(self) -> Response:
+        """Get active linked users.
 
         :returns: UserLinks
-
         :raises: DydxAPIError
-        '''
+        """
         return self._get('users/links', {})
 
     def send_link_request(
         self,
-        action,
-        address,
-    ):
-        '''
-        Send Link Request Action
+        action: str,
+        address: str,
+    ) -> Response:
+        """Send a link request action.
 
-        :param action: required
-        :type action: str in list [
-            "CREATE_SECONDARY_REQUEST",
-            "DELETE_SECONDARY_REQUEST",
-            "ACCEPT_PRIMARY_REQUEST",
-            "REJECT_PRIMARY_REQUEST",
-            "REMOVE",
-        ]
-
-        :param address: required
-        :type address: str
-
-        :returns: {}
-
+        :param action: Link action type.
+        :param address: Target Ethereum address.
+        :returns: Empty object.
         :raises: DydxAPIError
-        '''
+        """
         return self._post(
             'users/links',
-            {
-                'action': action,
-                'address': address,
-            },
+            {'action': action, 'address': address},
         )
 
-    def get_user_pending_link_requests(
-        self,
-    ):
-        '''
-        Get Pending Linked User Requests
+    def get_user_pending_link_requests(self) -> Response:
+        """Get pending linked user requests.
 
         :returns: UserLinkRequests
-
         :raises: DydxAPIError
-        '''
+        """
         return self._get('users/links/requests', {})
 
     # ============ Signing ============
 
     def sign(
         self,
-        request_path,
-        method,
-        iso_timestamp,
-        data,
-    ):
+        request_path: str,
+        method: str,
+        iso_timestamp: str,
+        data: Dict[str, Any],
+    ) -> str:
+        """Sign a private API request using HMAC-SHA256."""
         message_string = (
-            iso_timestamp +
-            method +
-            request_path +
-            (json_stringify(data) if data else '')
+            iso_timestamp
+            + method
+            + request_path
+            + (json_stringify(data) if data else '')
         )
 
         hashed = hmac.new(
             base64.urlsafe_b64decode(
-                (self.api_key_credentials['secret']).encode('utf-8'),
+                self.api_key_credentials['secret'].encode('utf-8'),
             ),
             msg=message_string.encode('utf-8'),
             digestmod=hashlib.sha256,

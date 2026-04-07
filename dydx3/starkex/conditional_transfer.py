@@ -1,5 +1,10 @@
-from collections import namedtuple
+"""Signable conditional transfer for STARK-signed L2 conditional transfers."""
+
+from __future__ import annotations
+
 import math
+from collections import namedtuple
+from typing import Union
 
 from dydx3.constants import COLLATERAL_ASSET
 from dydx3.constants import COLLATERAL_ASSET_ID_BY_NETWORK_ID
@@ -30,19 +35,20 @@ StarkwareConditionalTransfer = namedtuple(
 
 
 class SignableConditionalTransfer(Signable):
+    """Wrapper to convert a conditional transfer, and hash, sign, and verify its signature."""
 
     def __init__(
         self,
-        network_id,
-        sender_position_id,
-        receiver_position_id,
-        receiver_public_key,
-        fact_registry_address,
-        fact,
-        human_amount,
-        client_id,
-        expiration_epoch_seconds,
-    ):
+        network_id: int,
+        sender_position_id: Union[str, int],
+        receiver_position_id: Union[str, int],
+        receiver_public_key: Union[str, int],
+        fact_registry_address: str,
+        fact: bytes,
+        human_amount: Union[str, int, float],
+        client_id: str,
+        expiration_epoch_seconds: Union[str, int, float],
+    ) -> None:
         receiver_public_key = (
             receiver_public_key
             if isinstance(receiver_public_key, int)
@@ -61,19 +67,13 @@ class SignableConditionalTransfer(Signable):
             nonce=nonce_from_client_id(client_id),
             expiration_epoch_hours=expiration_epoch_hours,
         )
-        super(SignableConditionalTransfer, self).__init__(
-            network_id,
-            message,
-        )
+        super().__init__(network_id, message)
 
-    def to_starkware(self):
+    def to_starkware(self) -> StarkwareConditionalTransfer:
         return self._message
 
-    def _calculate_hash(self):
-        """Calculate the hash of the Starkware order."""
-
-        # TODO: Check values are in bounds
-
+    def _calculate_hash(self) -> int:
+        """Calculate the hash of the Starkware conditional transfer."""
         # The transfer asset and fee asset are always the collateral asset.
         # Fees are not supported for conditional transfers.
         asset_ids = get_hash(
@@ -109,9 +109,6 @@ class SignableConditionalTransfer(Signable):
         part_3 <<= CONDITIONAL_TRANSFER_PADDING_BITS
 
         return get_hash(
-            get_hash(
-                part_1,
-                part_2,
-            ),
+            get_hash(part_1, part_2),
             part_3,
         )

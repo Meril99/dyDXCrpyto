@@ -1,5 +1,10 @@
-from collections import namedtuple
+"""Signable withdrawal for STARK-signed L2 withdrawals."""
+
+from __future__ import annotations
+
 import math
+from collections import namedtuple
+from typing import Union
 
 from dydx3.constants import COLLATERAL_ASSET
 from dydx3.constants import COLLATERAL_ASSET_ID_BY_NETWORK_ID
@@ -24,15 +29,16 @@ StarkwareWithdrawal = namedtuple(
 
 
 class SignableWithdrawal(Signable):
+    """Wrapper to convert a withdrawal, and hash, sign, and verify its signature."""
 
     def __init__(
         self,
-        network_id,
-        position_id,
-        human_amount,
-        client_id,
-        expiration_epoch_seconds,
-    ):
+        network_id: int,
+        position_id: Union[str, int],
+        human_amount: Union[str, int, float],
+        client_id: str,
+        expiration_epoch_seconds: Union[str, int, float],
+    ) -> None:
         quantums_amount = to_quantums_exact(human_amount, COLLATERAL_ASSET)
         expiration_epoch_hours = math.ceil(
             float(expiration_epoch_seconds) / ONE_HOUR_IN_SECONDS,
@@ -43,16 +49,13 @@ class SignableWithdrawal(Signable):
             nonce=nonce_from_client_id(client_id),
             expiration_epoch_hours=expiration_epoch_hours,
         )
-        super(SignableWithdrawal, self).__init__(network_id, message)
+        super().__init__(network_id, message)
 
-    def to_starkware(self):
+    def to_starkware(self) -> StarkwareWithdrawal:
         return self._message
 
-    def _calculate_hash(self):
-        """Calculate the hash of the Starkware order."""
-
-        # TODO: Check values are in bounds
-
+    def _calculate_hash(self) -> int:
+        """Calculate the hash of the Starkware withdrawal."""
         packed = WITHDRAWAL_PREFIX
         packed <<= WITHDRAWAL_FIELD_BIT_LENGTHS['position_id']
         packed += self._message.position_id

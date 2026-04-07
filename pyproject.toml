@@ -1,0 +1,77 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dydx-v3-python"
+version = "3.0.0"
+description = "dYdX Python REST API for Limit Orders"
+readme = "README.md"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.8"
+authors = [
+    {name = "dYdX Trading Inc.", email = "contact@dydx.exchange"},
+]
+keywords = ["dydx", "exchange", "rest", "api", "defi", "ethereum"]
+classifiers = [
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
+dependencies = [
+    "aiohttp>=3.8.1",
+    "cytoolz>=0.12.1",
+    "dateparser>=1.0.0",
+    "ecdsa>=0.16.0",
+    "eth_keys",
+    "eth-account>=0.4.0,<0.6.0",
+    "mpmath>=1.0.0",
+    "requests>=2.22.0,<3.0.0",
+    "sympy>=1.6",
+    "web3>=5.0.0,<6.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "tox>=4.3.4",
+    "flake8>=6.0",
+    "mypy>=1.0",
+    "autopep8",
+]
+
+[project.urls]
+Homepage = "https://github.com/dydxprotocol/dydx-v3-python"
+Repository = "https://github.com/dydxprotocol/dydx-v3-python"
+Issues = "https://github.com/dydxprotocol/dydx-v3-python/issues"
+
+[tool.setuptools.packages.find]
+include = ["dydx3*"]
+
+[tool.setuptools.package-data]
+dydx3 = ["abi/*.json", "starkex/starkex_resources/*.json"]
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+exclude = ["dydx3/starkex/starkex_resources/"]
+
+[tool.pytest.ini_options]
+addopts = "-v --showlocals --durations 10"
+testpaths = ["tests"]
+xfail_strict = true
+
+[tool.flake8]
+exclude = ["dydx3/starkex/starkex_resources"]
+per-file-ignores = ["__init__.py:F401"]
+max-line-length = 100

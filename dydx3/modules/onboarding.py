@@ -1,26 +1,32 @@
+"""Onboarding module for creating new users via Ethereum key auth."""
+
+from __future__ import annotations
+
 import base64
+from typing import Any, Dict, Optional
 
 from web3 import Web3
 
 from dydx3.constants import OFF_CHAIN_ONBOARDING_ACTION
 from dydx3.constants import OFF_CHAIN_KEY_DERIVATION_ACTION
 from dydx3.eth_signing import SignOnboardingAction
-from dydx3.helpers.requests import request
+from dydx3.helpers.requests import Response, request
 from dydx3.starkex.helpers import private_key_to_public_key_pair_hex
 
 
-class Onboarding(object):
+class Onboarding:
+    """Module for user onboarding and key derivation."""
 
     def __init__(
         self,
-        host,
-        eth_signer,
-        network_id,
-        default_address,
-        api_timeout,
-        stark_public_key=None,
-        stark_public_key_y_coordinate=None,
-    ):
+        host: str,
+        eth_signer: Any,
+        network_id: int,
+        default_address: Optional[str],
+        api_timeout: int,
+        stark_public_key: Optional[str] = None,
+        stark_public_key_y_coordinate: Optional[str] = None,
+    ) -> None:
         self.host = host
         self.default_address = default_address
         self.api_timeout = api_timeout
@@ -33,10 +39,10 @@ class Onboarding(object):
 
     def _post(
         self,
-        endpoint,
-        data,
-        opt_ethereum_address,
-    ):
+        endpoint: str,
+        data: Dict[str, Any],
+        opt_ethereum_address: Optional[str],
+    ) -> Response:
         ethereum_address = opt_ethereum_address or self.default_address
 
         signature = self.signer.sign(
@@ -44,7 +50,7 @@ class Onboarding(object):
             action=OFF_CHAIN_ONBOARDING_ACTION,
         )
 
-        request_path = '/'.join(['/v3', endpoint])
+        request_path = f'/v3/{endpoint}'
         return request(
             self.host + request_path,
             'post',
@@ -60,45 +66,31 @@ class Onboarding(object):
 
     def create_user(
         self,
-        stark_public_key=None,
-        stark_public_key_y_coordinate=None,
-        ethereum_address=None,
-        referred_by_affiliate_link=None,
-        country=None,
-    ):
-        '''
-        Onboard a user with an Ethereum address and STARK key.
+        stark_public_key: Optional[str] = None,
+        stark_public_key_y_coordinate: Optional[str] = None,
+        ethereum_address: Optional[str] = None,
+        referred_by_affiliate_link: Optional[str] = None,
+        country: Optional[str] = None,
+    ) -> Response:
+        """Onboard a user with an Ethereum address and STARK key.
 
         By default, onboards using the STARK and/or API public keys
         corresponding to private keys that the client was initialized with.
 
-        :param stark_public_key: optional
-        :type stark_public_key: str
-
-        :param stark_public_key_y_coordinate: optional
-        :type stark_public_key_y_coordinate: str
-
-        :param ethereum_address: optional
-        :type ethereum_address: str
-
-        :param referred_by_affiliate_link: optional
-        :type referred_by_affiliate_link: str
-
-        :param country optional
-        :type country: str (ISO 3166-1 Alpha-2)
-
+        :param stark_public_key: Optional STARK public key override.
+        :param stark_public_key_y_coordinate: Optional Y coordinate override.
+        :param ethereum_address: Optional Ethereum address override.
+        :param referred_by_affiliate_link: Optional referral link.
+        :param country: Optional ISO 3166-1 Alpha-2 country code.
         :returns: { apiKey, user, account }
-
         :raises: DydxAPIError
-        '''
+        """
         stark_key = stark_public_key or self.stark_public_key
         stark_key_y = (
             stark_public_key_y_coordinate or self.stark_public_key_y_coordinate
         )
         if stark_key is None:
-            raise ValueError(
-                'STARK private key or public key is required'
-            )
+            raise ValueError('STARK private key or public key is required')
         if stark_key_y is None:
             raise ValueError(
                 'STARK private key or public key y-coordinate is required'
@@ -118,18 +110,17 @@ class Onboarding(object):
 
     def derive_stark_key(
         self,
-        ethereum_address=None,
-    ):
-        '''
-        Derive a STARK key pair deterministically from an Ethereum key.
+        ethereum_address: Optional[str] = None,
+    ) -> Dict[str, str]:
+        """Derive a STARK key pair deterministically from an Ethereum key.
 
         This is the function used by the dYdX frontend to derive a user's
         STARK key pair in a way that is recoverable. Programmatic traders may
         optionally derive their STARK key pair in the same way.
 
-        :param ethereum_address: optional
-        :type ethereum_address: str
-        '''
+        :param ethereum_address: Optional Ethereum address override.
+        :returns: Dict with public_key, public_key_y_coordinate, private_key.
+        """
         signature = self.signer.sign(
             ethereum_address or self.default_address,
             action=OFF_CHAIN_KEY_DERIVATION_ACTION,
@@ -144,19 +135,21 @@ class Onboarding(object):
         return {
             'public_key': public_x,
             'public_key_y_coordinate': public_y,
-            'private_key': private_key_hex
+            'private_key': private_key_hex,
         }
 
     def recover_default_api_key_credentials(
         self,
-        ethereum_address=None,
-    ):
-        '''
-        Derive API credentials deterministically from an Ethereum key.
+        ethereum_address: Optional[str] = None,
+    ) -> Dict[str, str]:
+        """Derive API credentials deterministically from an Ethereum key.
 
         This can be used to recover the default API key credentials, which are
         the same set of credentials used in the dYdX frontend.
-        '''
+
+        :param ethereum_address: Optional Ethereum address override.
+        :returns: Dict with secret, key, passphrase.
+        """
         signature = self.signer.sign(
             ethereum_address or self.default_address,
             action=OFF_CHAIN_ONBOARDING_ACTION,

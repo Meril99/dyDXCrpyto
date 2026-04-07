@@ -1,5 +1,11 @@
+"""Ethereum smart contract interaction module."""
+
+from __future__ import annotations
+
 import json
 import os
+from typing import Any, Dict, Optional
+
 from web3 import Web3
 
 from dydx3.constants import ASSET_RESOLUTION
@@ -19,17 +25,18 @@ STARKWARE_PERPETUALS_ABI = 'abi/starkware-perpetuals.json'
 COLLATERAL_ASSET_RESOLUTION = float(ASSET_RESOLUTION[COLLATERAL_ASSET])
 
 
-class Eth(object):
+class Eth:
+    """Module for interacting with Ethereum smart contracts."""
 
     def __init__(
         self,
-        web3,
-        network_id,
-        eth_private_key,
-        default_address,
-        stark_public_key,
-        send_options,
-    ):
+        web3: Web3,
+        network_id: int,
+        eth_private_key: str,
+        default_address: Optional[str],
+        stark_public_key: Optional[str],
+        send_options: Dict[str, Any],
+    ) -> None:
         self.web3 = web3
         self.network_id = network_id
         self.eth_private_key = eth_private_key
@@ -37,78 +44,70 @@ class Eth(object):
         self.stark_public_key = stark_public_key
         self.send_options = send_options
 
-        self.cached_contracts = {}
-        self._next_nonce_for_address = {}
+        self.cached_contracts: Dict[str, Any] = {}
+        self._next_nonce_for_address: Dict[str, int] = {}
 
     # -----------------------------------------------------------
     # Helper Functions
     # -----------------------------------------------------------
 
-    def create_contract(
-        self,
-        address,
-        file_path,
-    ):
+    def create_contract(self, address: str, file_path: str) -> Any:
+        """Create a web3 contract instance from an ABI file."""
         dydx_folder = os.path.join(
             os.path.dirname(os.path.abspath(__file__)),
             '..',
         )
-        return self.web3.eth.contract(
-            address=address,
-            abi=json.load(open(os.path.join(dydx_folder, file_path), 'r')),
-        )
+        abi_path = os.path.join(dydx_folder, file_path)
+        with open(abi_path) as f:
+            abi = json.load(f)
+        return self.web3.eth.contract(address=address, abi=abi)
 
-    def get_contract(
-        self,
-        address,
-        file_path,
-    ):
+    def get_contract(self, address: str, file_path: str) -> Any:
+        """Get a cached contract instance, creating it if needed."""
         if address not in self.cached_contracts:
             self.cached_contracts[address] = self.create_contract(
-                address,
-                file_path,
+                address, file_path,
             )
         return self.cached_contracts[address]
 
     def get_exchange_contract(
         self,
-        contract_address=None,
-    ):
+        contract_address: Optional[str] = None,
+    ) -> Any:
+        """Get the Starkware perpetuals exchange contract."""
         if contract_address is None:
             contract_address = STARKWARE_PERPETUALS_CONTRACT.get(
                 self.network_id,
             )
         if contract_address is None:
             raise ValueError(
-                'Perpetuals exchange contract on network {}'.format(
-                    self.network_id,
-                )
+                f'Perpetuals exchange contract on network {self.network_id}'
             )
         contract_address = Web3.toChecksumAddress(contract_address)
         return self.get_contract(contract_address, STARKWARE_PERPETUALS_ABI)
 
     def get_token_contract(
         self,
-        asset,
-        token_address,
-    ):
+        asset: str,
+        token_address: Optional[str],
+    ) -> Any:
+        """Get the ERC-20 token contract for an asset."""
         if token_address is None:
             token_address = TOKEN_CONTRACTS.get(asset, {}).get(self.network_id)
         if token_address is None:
             raise ValueError(
-                'Token address unknown for asset {} on network {}'.format(
-                    asset,
-                    self.network_id,
-                )
+                f'Token address unknown for asset {asset} '
+                f'on network {self.network_id}'
             )
         token_address = Web3.toChecksumAddress(token_address)
         return self.get_contract(token_address, ERC20_ABI)
 
     def send_eth_transaction(
         self,
-        method=None,
-        options=None,
-    ):
+        method: Optional[Any] = None,
+        options: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Build, sign, and send an Ethereum transaction."""
         options = dict(self.send_options, **(options or {}))
 
         if 'from' not in options:
@@ -143,10 +142,10 @@ class Eth(object):
             tx_hash = self.web3.eth.sendRawTransaction(signed.rawTransaction)
         except ValueError as error:
             while (
-                auto_detect_nonce and
-                (
-                    'nonce too low' in str(error) or
-                    'replacement transaction underpriced' in str(error)
+                auto_detect_nonce
+                and (
+                    'nonce too low' in str(error)
+                    or 'replacement transaction underpriced' in str(error)
                 )
             ):
                 try:
@@ -158,19 +157,17 @@ class Eth(object):
                 except ValueError as inner_error:
                     error = inner_error
                 else:
-                    break  # Break on success...
+                    break
             else:
-                raise error  # ...and raise error otherwise.
+                raise error
 
         # Update next nonce for the account.
         self._next_nonce_for_address[options['from']] = options['nonce'] + 1
 
         return tx_hash.hex()
 
-    def get_next_nonce(
-        self,
-        ethereum_address,
-    ):
+    def get_next_nonce(self, ethereum_address: str) -> int:
+        """Get the next nonce for a given address, auto-detecting if needed."""
         if self._next_nonce_for_address.get(ethereum_address) is None:
             self._next_nonce_for_address[ethereum_address] = (
                 self.web3.eth.getTransactionCount(ethereum_address)
@@ -179,32 +176,24 @@ class Eth(object):
 
     def sign_tx(
         self,
-        method,
-        options,
-    ):
+        method: Optional[Any],
+        options: Dict[str, Any],
+    ) -> Any:
+        """Sign a transaction using the Ethereum private key."""
         if method is None:
             tx = options
         else:
             tx = method.buildTransaction(options)
         return self.web3.eth.account.sign_transaction(
-            tx,
-            self.eth_private_key,
+            tx, self.eth_private_key,
         )
 
-    def wait_for_tx(
-        self,
-        tx_hash,
-    ):
-        '''
-        Wait for a tx to be mined and return the receipt. Raise on revert.
+    def wait_for_tx(self, tx_hash: str) -> None:
+        """Wait for a transaction to be mined and raise on revert.
 
-        :param tx_hash: required
-        :type tx_hash: number
-
-        :returns: transactionReceipt
-
+        :param tx_hash: Transaction hash.
         :raises: TransactionReverted
-        '''
+        """
         tx_receipt = self.web3.eth.waitForTransactionReceipt(tx_hash)
         if tx_receipt['status'] == 0:
             raise TransactionReverted(tx_receipt)
@@ -215,30 +204,20 @@ class Eth(object):
 
     def register_user(
         self,
-        registration_signature,
-        stark_public_key=None,
-        ethereum_address=None,
-        send_options=None,
-    ):
-        '''
-        Register a STARK key, using a signature provided by dYdX.
+        registration_signature: str,
+        stark_public_key: Optional[str] = None,
+        ethereum_address: Optional[str] = None,
+        send_options: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Register a STARK key using a signature provided by dYdX.
 
-        :param registration_signature: required
-        :type registration_signature: string
-
-        :param stark_public_key: optional
-        :type stark_public_key: string
-
-        :param ethereum_address: optional
-        :type ethereum_address: string
-
-        :param send_options: optional
-        :type send_options: dict
-
-        :returns: transactionHash
-
+        :param registration_signature: Registration signature from dYdX.
+        :param stark_public_key: Optional STARK public key override.
+        :param ethereum_address: Optional Ethereum address override.
+        :param send_options: Optional transaction options.
+        :returns: Transaction hash.
         :raises: ValueError
-        '''
+        """
         stark_public_key = stark_public_key or self.stark_public_key
         if stark_public_key is None:
             raise ValueError('No stark_public_key was provided')
@@ -262,30 +241,20 @@ class Eth(object):
 
     def deposit_to_exchange(
         self,
-        position_id,
-        human_amount,
-        stark_public_key=None,
-        send_options=None,
-    ):
-        '''
-        Deposit collateral to the L2 perpetuals exchange.
+        position_id: int | str,
+        human_amount: float | str,
+        stark_public_key: Optional[str] = None,
+        send_options: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Deposit collateral to the L2 perpetuals exchange.
 
-        :param position_id: required
-        :type position_id: int or string
-
-        :param human_amount: required
-        :type human_amount: number or string
-
-        :param stark_public_key: optional
-        :type stark_public_key: string
-
-        :param send_options: optional
-        :type send_options: dict
-
-        :returns: transactionHash
-
+        :param position_id: Position ID.
+        :param human_amount: Amount in human-readable units.
+        :param stark_public_key: Optional STARK public key override.
+        :param send_options: Optional transaction options.
+        :returns: Transaction hash.
         :raises: ValueError
-        '''
+        """
         stark_public_key = stark_public_key or self.stark_public_key
         if stark_public_key is None:
             raise ValueError('No stark_public_key was provided')
@@ -303,22 +272,16 @@ class Eth(object):
 
     def withdraw(
         self,
-        stark_public_key=None,
-        send_options=None,
-    ):
-        '''
-        Withdraw from exchange.
+        stark_public_key: Optional[str] = None,
+        send_options: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Withdraw from exchange.
 
-        :param stark_public_key: optional
-        :type stark_public_key: string
-
-        :param send_options: optional
-        :type send_options: dict
-
-        :returns: transactionHash
-
+        :param stark_public_key: Optional STARK public key override.
+        :param send_options: Optional transaction options.
+        :returns: Transaction hash.
         :raises: ValueError
-        '''
+        """
         stark_public_key = stark_public_key or self.stark_public_key
         if stark_public_key is None:
             raise ValueError('No stark_public_key was provided')
@@ -334,26 +297,18 @@ class Eth(object):
 
     def withdraw_to(
         self,
-        recipient,
-        stark_public_key=None,
-        send_options=None,
-    ):
-        '''
-        Withdraw from exchange to address.
+        recipient: str,
+        stark_public_key: Optional[str] = None,
+        send_options: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Withdraw from exchange to a specific address.
 
-        :param recipient: required
-        :type recipient: string
-
-        :param stark_public_key: optional
-        :type stark_public_key: string
-
-        :param send_options: optional
-        :type send_options: dict
-
-        :returns: transactionHash
-
+        :param recipient: Destination Ethereum address.
+        :param stark_public_key: Optional STARK public key override.
+        :param send_options: Optional transaction options.
+        :returns: Transaction hash.
         :raises: ValueError
-        '''
+        """
         stark_public_key = stark_public_key or self.stark_public_key
         if stark_public_key is None:
             raise ValueError('No stark_public_key was provided')
@@ -370,35 +325,26 @@ class Eth(object):
 
     def transfer_eth(
         self,
-        to_address=None,  # Require keyword args to avoid confusing the amount.
-        human_amount=None,
-        send_options=None,
-    ):
-        '''
-        Send Ethereum.
+        to_address: Optional[str] = None,
+        human_amount: Optional[str | float] = None,
+        send_options: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Send Ethereum.
 
-        :param to_address: required
-        :type to_address: number
-
-        :param human_amount: required
-        :type human_amount: number or string
-
-        :param send_options: optional
-        :type send_options: dict
-
-        :returns: transactionHash
-
+        :param to_address: Destination address.
+        :param human_amount: Amount in ETH.
+        :param send_options: Optional transaction options.
+        :returns: Transaction hash.
         :raises: ValueError
-        '''
+        """
         if to_address is None:
             raise ValueError('to_address is required')
-
         if human_amount is None:
             raise ValueError('human_amount is required')
 
         return self.send_eth_transaction(
             options=dict(
-                send_options,
+                send_options or {},
                 to=to_address,
                 value=Web3.toWei(human_amount, 'ether'),
             ),
@@ -406,44 +352,30 @@ class Eth(object):
 
     def transfer_token(
         self,
-        to_address=None,  # Require keyword args to avoid confusing the amount.
-        human_amount=None,
-        asset=COLLATERAL_ASSET,
-        token_address=None,
-        send_options=None,
-    ):
-        '''
-        Send Ethereum.
+        to_address: Optional[str] = None,
+        human_amount: Optional[str | float] = None,
+        asset: str = COLLATERAL_ASSET,
+        token_address: Optional[str] = None,
+        send_options: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Send an ERC-20 token.
 
-        :param to_address: required
-        :type to_address: number
-
-        :param human_amount: required
-        :type human_amount: number of string
-
-        :param asset: optional
-        :type asset: string
-
-        :param token_address: optional
-        :type asset: string
-
-        :param send_options: optional
-        :type send_options: dict
-
-        :returns: transactionHash
-
+        :param to_address: Destination address.
+        :param human_amount: Amount in human-readable units.
+        :param asset: Asset identifier.
+        :param token_address: Optional token contract address override.
+        :param send_options: Optional transaction options.
+        :returns: Transaction hash.
         :raises: ValueError
-        '''
+        """
         if to_address is None:
             raise ValueError('to_address is required')
-
         if human_amount is None:
             raise ValueError('human_amount is required')
-
         if asset not in ASSET_RESOLUTION:
-            raise ValueError('Unknown asset {}'.format(asset))
-        asset_resolution = ASSET_RESOLUTION[asset]
+            raise ValueError(f'Unknown asset {asset}')
 
+        asset_resolution = ASSET_RESOLUTION[asset]
         contract = self.get_token_contract(asset, token_address)
         return self.send_eth_transaction(
             method=contract.functions.transfer(
@@ -455,36 +387,23 @@ class Eth(object):
 
     def set_token_max_allowance(
         self,
-        spender,
-        asset=COLLATERAL_ASSET,
-        token_address=None,
-        send_options=None,
-    ):
-        '''
-        Set max allowance for some spender for some asset or token_address.
+        spender: str,
+        asset: str = COLLATERAL_ASSET,
+        token_address: Optional[str] = None,
+        send_options: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Set max allowance for a spender on an ERC-20 token.
 
-        :param spender: required
-        :type spender: string
-
-        :param asset: optional
-        :type asset: string
-
-        :param token_address: optional
-        :type asset: string
-
-        :param send_options: optional
-        :type send_options: dict
-
-        :returns: transactionHash
-
+        :param spender: Spender address.
+        :param asset: Asset identifier.
+        :param token_address: Optional token contract address override.
+        :param send_options: Optional transaction options.
+        :returns: Transaction hash.
         :raises: ValueError
-        '''
+        """
         contract = self.get_token_contract(asset, token_address)
         return self.send_eth_transaction(
-            method=contract.functions.approve(
-                spender,
-                MAX_SOLIDITY_UINT,
-            ),
+            method=contract.functions.approve(spender, MAX_SOLIDITY_UINT),
             options=send_options,
         )
 
@@ -492,20 +411,13 @@ class Eth(object):
     # Getters
     # -----------------------------------------------------------
 
-    def get_eth_balance(
-        self,
-        owner=None,
-    ):
-        '''
-        Get the owner's ether balance as a human readable amount.
+    def get_eth_balance(self, owner: Optional[str] = None) -> Any:
+        """Get the owner's ETH balance in human-readable units.
 
-        :param owner: optional
-        :type owner: string
-
-        :returns: string
-
+        :param owner: Optional address override.
+        :returns: Balance in ETH.
         :raises: ValueError
-        '''
+        """
         owner = owner or self.default_address
         if owner is None:
             raise ValueError(
@@ -517,24 +429,17 @@ class Eth(object):
 
     def get_token_balance(
         self,
-        owner=None,
-        asset=COLLATERAL_ASSET,
-        token_address=None,
-    ):
-        '''
-        Get the owner's balance for some asset or token address.
+        owner: Optional[str] = None,
+        asset: str = COLLATERAL_ASSET,
+        token_address: Optional[str] = None,
+    ) -> int:
+        """Get the owner's token balance.
 
-        :param owner: optional
-        :type owner: string
-
-        :param asset: optional
-        :type asset: string
-
-        :param token_address: optional
-        :type asset: string
-
-        :returns: int
-        '''
+        :param owner: Optional address override.
+        :param asset: Asset identifier.
+        :param token_address: Optional token contract address override.
+        :returns: Token balance in base units.
+        """
         owner = owner or self.default_address
         if owner is None:
             raise ValueError(
@@ -546,30 +451,20 @@ class Eth(object):
 
     def get_token_allowance(
         self,
-        spender,
-        owner=None,
-        asset=COLLATERAL_ASSET,
-        token_address=None,
-    ):
-        '''
-        Get allowance for some spender for some asset or token address.
+        spender: str,
+        owner: Optional[str] = None,
+        asset: str = COLLATERAL_ASSET,
+        token_address: Optional[str] = None,
+    ) -> int:
+        """Get the token allowance for a spender.
 
-        :param spender: required
-        :type spender: string
-
-        :param owner: optional
-        :type owner: string
-
-        :param asset: optional
-        :type asset: string
-
-        :param token_address: optional
-        :type token_address: string
-
-        :returns: int
-
+        :param spender: Spender address.
+        :param owner: Optional owner address override.
+        :param asset: Asset identifier.
+        :param token_address: Optional token contract address override.
+        :returns: Allowance in base units.
         :raises: ValueError
-        '''
+        """
         owner = owner or self.default_address
         if owner is None:
             raise ValueError(

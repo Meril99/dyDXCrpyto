@@ -1,3 +1,9 @@
+"""EIP-712 signing for the onboarding action."""
+
+from __future__ import annotations
+
+from typing import Any, Dict, List
+
 from web3 import Web3
 
 from dydx3.constants import NETWORK_ID_MAINNET
@@ -10,17 +16,17 @@ EIP712_ONBOARDING_ACTION_STRUCT = [
     {'type': 'string', 'name': 'onlySignOn'},
 ]
 EIP712_ONBOARDING_ACTION_STRUCT_STRING = (
-    'dYdX(' +
-    'string action,' +
-    'string onlySignOn' +
+    'dYdX('
+    'string action,'
+    'string onlySignOn'
     ')'
 )
 EIP712_ONBOARDING_ACTION_STRUCT_TESTNET = [
     {'type': 'string', 'name': 'action'},
 ]
 EIP712_ONBOARDING_ACTION_STRUCT_STRING_TESTNET = (
-    'dYdX(' +
-    'string action' +
+    'dYdX('
+    'string action'
     ')'
 )
 EIP712_STRUCT_NAME = 'dYdX'
@@ -29,24 +35,21 @@ ONLY_SIGN_ON_DOMAIN_MAINNET = 'https://trade.dydx.exchange'
 
 
 class SignOnboardingAction(SignOffChainAction):
+    """Sign onboarding messages using EIP-712 typed data."""
 
-    def get_eip712_struct(self):
-        # On mainnet, include an extra onlySignOn parameter.
+    def get_eip712_struct(self) -> List[Dict[str, str]]:
         if self.network_id == NETWORK_ID_MAINNET:
             return EIP712_ONBOARDING_ACTION_STRUCT
-        else:
-            return EIP712_ONBOARDING_ACTION_STRUCT_TESTNET
+        return EIP712_ONBOARDING_ACTION_STRUCT_TESTNET
 
-    def get_eip712_struct_name(self):
+    def get_eip712_struct_name(self) -> str:
         return EIP712_STRUCT_NAME
 
     def get_eip712_message(
         self,
-        **message,
-    ):
-        eip712_message = super(SignOnboardingAction, self).get_eip712_message(
-            **message,
-        )
+        **message: Any,
+    ) -> Dict[str, Any]:
+        eip712_message = super().get_eip712_message(**message)
 
         # On mainnet, include an extra onlySignOn parameter.
         if self.network_id == NETWORK_ID_MAINNET:
@@ -56,21 +59,15 @@ class SignOnboardingAction(SignOffChainAction):
 
         return eip712_message
 
-    def get_hash(
-        self,
-        action,
-    ):
+    def get_hash(self, action: str = '', **kwargs: Any) -> bytes:
         # On mainnet, include an extra onlySignOn parameter.
         if self.network_id == NETWORK_ID_MAINNET:
             eip712_struct_str = EIP712_ONBOARDING_ACTION_STRUCT_STRING
         else:
             eip712_struct_str = EIP712_ONBOARDING_ACTION_STRUCT_STRING_TESTNET
 
-        data = [
-            [
-                'bytes32',
-                'bytes32',
-            ],
+        data: List[List[Any]] = [
+            ['bytes32', 'bytes32'],
             [
                 util.hash_string(eip712_struct_str),
                 util.hash_string(action),

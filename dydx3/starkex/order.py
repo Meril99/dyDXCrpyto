@@ -1,7 +1,11 @@
+"""Signable order for STARK-signed limit orders."""
+
+from __future__ import annotations
+
 import decimal
 import math
-
 from collections import namedtuple
+from typing import Union
 
 from dydx3.constants import COLLATERAL_ASSET
 from dydx3.constants import COLLATERAL_ASSET_ID_BY_NETWORK_ID
@@ -42,19 +46,20 @@ StarkwareOrder = namedtuple(
 
 
 class SignableOrder(Signable):
+    """Wrapper to convert an order, and hash, sign, and verify its signature."""
 
     def __init__(
         self,
-        network_id,
-        market,
-        side,
-        position_id,
-        human_size,
-        human_price,
-        limit_fee,
-        client_id,
-        expiration_epoch_seconds,
-    ):
+        network_id: int,
+        market: str,
+        side: str,
+        position_id: Union[str, int],
+        human_size: Union[str, int, float],
+        human_price: Union[str, int, float],
+        limit_fee: Union[str, float],
+        client_id: str,
+        expiration_epoch_seconds: Union[str, int, float],
+    ) -> None:
         synthetic_asset = SYNTHETIC_ASSET_MAP[market]
         synthetic_asset_id = SYNTHETIC_ASSET_ID_MAP[synthetic_asset]
         collateral_asset_id = COLLATERAL_ASSET_ID_BY_NETWORK_ID[network_id]
@@ -70,7 +75,7 @@ class SignableOrder(Signable):
         if is_buying_synthetic:
             human_cost = DECIMAL_CONTEXT_ROUND_UP.multiply(
                 decimal.Decimal(human_size),
-                decimal.Decimal(human_price)
+                decimal.Decimal(human_price),
             )
             quantums_amount_collateral = to_quantums_round_up(
                 human_cost,
@@ -79,14 +84,14 @@ class SignableOrder(Signable):
         else:
             human_cost = DECIMAL_CONTEXT_ROUND_DOWN.multiply(
                 decimal.Decimal(human_size),
-                decimal.Decimal(human_price)
+                decimal.Decimal(human_price),
             )
             quantums_amount_collateral = to_quantums_round_down(
                 human_cost,
                 COLLATERAL_ASSET,
             )
 
-        # The limitFee is a fraction, e.g. 0.01 is a 1 % fee.
+        # The limitFee is a fraction, e.g. 0.01 is a 1% fee.
         # It is always paid in the collateral asset.
         # Constrain the limit fee to six decimals of precision.
         # The final fee amount must be rounded up.
@@ -120,16 +125,13 @@ class SignableOrder(Signable):
             nonce=nonce_from_client_id(client_id),
             expiration_epoch_hours=expiration_epoch_hours,
         )
-        super(SignableOrder, self).__init__(network_id, message)
+        super().__init__(network_id, message)
 
-    def to_starkware(self):
+    def to_starkware(self) -> StarkwareOrder:
         return self._message
 
-    def _calculate_hash(self):
+    def _calculate_hash(self) -> int:
         """Calculate the hash of the Starkware order."""
-
-        # TODO: Check values are in bounds
-
         if self._message.is_buying_synthetic:
             asset_id_sell = self._message.asset_id_collateral
             asset_id_buy = self._message.asset_id_synthetic
@@ -158,16 +160,10 @@ class SignableOrder(Signable):
         part_2 <<= ORDER_PADDING_BITS
 
         assets_hash = get_hash(
-            get_hash(
-                asset_id_sell,
-                asset_id_buy,
-            ),
+            get_hash(asset_id_sell, asset_id_buy),
             self._message.asset_id_fee,
         )
         return get_hash(
-            get_hash(
-                assets_hash,
-                part_1,
-            ),
+            get_hash(assets_hash, part_1),
             part_2,
         )
