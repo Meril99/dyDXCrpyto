@@ -31,3 +31,6 @@ from quant.signals import (
 from quant.backtester import Backtester, BacktestConfig, Strategy
 from quant.market_maker import MarketMaker, MarketMakerConfig
 from quant.risk_monitor import RiskMonitor, RiskLimits
+from quant.sentiment_signal import NewsSentimentSignal
+from quant.llm_agent import LLMAgent
+from quant.llm_tools import TradingTools
