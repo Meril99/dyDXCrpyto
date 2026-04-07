@@ -46,6 +46,8 @@ from quant.signals import (
     SignalCombiner,
     VolatilityRegime,
 )
+from quant.sentiment_signal import NewsSentimentSignal
+from quant.market_maker import parse_orderbook
 
 # ============================================================
 # Configuration — read from environment
@@ -182,10 +184,15 @@ def run() -> None:
     ob_signal = OrderbookImbalance(DYDX_MARKET, depth=10)
     fr_signal = FundingRateMeanReversion(DYDX_MARKET)
     vol_signal = VolatilityRegime(DYDX_MARKET, short_window=20, long_window=200)
+    sentiment_signal = NewsSentimentSignal(
+        market=DYDX_MARKET,
+        cache_duration_s=300,  # Re-fetch news every 5 minutes
+    )
     combiner = SignalCombiner({
-        ob_signal.name: 0.2,
-        fr_signal.name: 0.4,
-        vol_signal.name: 0.4,
+        ob_signal.name: 0.15,
+        fr_signal.name: 0.30,
+        vol_signal.name: 0.30,
+        sentiment_signal.name: 0.25,  # News sentiment gets 25% weight
     })
 
     # --- Notify start ---
@@ -217,14 +224,14 @@ def run() -> None:
 
             # 2. Update signals
             ob_resp = client.public.get_orderbook(DYDX_MARKET)
-            from quant.market_maker import parse_orderbook
             orderbook = parse_orderbook(ob_resp.data)
 
             ob_sig = ob_signal.compute(orderbook=orderbook)
             vol_signal.update(orderbook.bids[0].price if orderbook.bids else 0)
             vol_sig = vol_signal.compute()
             fr_sig = fr_signal.compute()
-            composite = combiner.combine([ob_sig, fr_sig, vol_sig])
+            news_sig = sentiment_signal.compute()  # LLM news sentiment
+            composite = combiner.combine([ob_sig, fr_sig, vol_sig, news_sig])
 
             # 3. Feed signal to market maker and run
             mm.update_orderbook(orderbook)
