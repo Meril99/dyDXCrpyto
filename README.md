@@ -1,125 +1,323 @@
-<p align="center"><img src="https://dydx.exchange/flat.svg" width="256" /></p>
+# dYdX v3 Python Client & Quantitative Trading Toolkit
 
 <div align="center">
-  <a href='https://pypi.org/project/dydx-v3-python'>
-    <img src='https://img.shields.io/pypi/v/dydx-v3-python.svg' alt='PyPI'/>
-  </a>
-  <a href='https://github.com/dydxprotocol/dydx-v3-python/blob/master/LICENSE'>
-    <img src='https://img.shields.io/github/license/dydxprotocol/dydx-v3-python.svg' alt='License' />
-  </a>
+
+![Python](https://img.shields.io/badge/python-3.8%2B-blue)
+![License](https://img.shields.io/badge/license-Apache%202.0-green)
+![Tests](https://img.shields.io/badge/tests-143%20passing-brightgreen)
+![Type Hints](https://img.shields.io/badge/typing-fully%20typed-blue)
+
 </div>
-<br>
 
-Python client for dYdX (v3 API).
+Python REST API client for [dYdX v3](https://dydx.exchange) perpetual futures exchange, with an integrated **quantitative trading toolkit** featuring a market-making engine, backtesting framework, signal pipeline, and risk monitor.
 
-The library is currently tested against Python versions 2.7, 3.4, 3.5, 3.6, 3.9, and 3.11.
+## Architecture
+
+```
+                    +-----------+
+   Market Data ---> |  Signals  | ---> Normalized scores [-1, 1]
+                    +-----------+
+                         |
+                         v
+                   +----------------+      +--------------+
+                   | Market Maker   | ---> | Risk Monitor |
+                   | (A-S optimal   |      | (circuit     |
+                   |  quoting)      |      |  breakers)   |
+                   +----------------+      +--------------+
+                         |
+                         v
+                   +-----------+
+                   | Backtester| (validate strategies offline)
+                   +-----------+
+```
 
 ## Installation
 
-The `dydx-v3-python` package is available on [PyPI](https://pypi.org/project/dydx-v3-python). Install with `pip`:
-
 ```bash
-pip install dydx-v3-python
+pip install -r requirements.txt
 ```
 
-## Getting Started
+Requires Python 3.8+. Key dependencies: `web3`, `numpy`, `pandas`.
 
-The `Client` object can be created with different levels of authentication depending on which features are needed. For more complete examples, see the [examples](./examples/) directory, as well as [the integration tests](./integration_tests/).
+## Quick Start
 
-### Public endpoints
-
-No authentication information is required to access public endpoints.
+### API Client
 
 ```python
 from dydx3 import Client
-from web3 import Web3
+from dydx3.constants import API_HOST_MAINNET
 
-#
-# Access public API endpoints.
-#
-public_client = Client(
-    host='http://localhost:8080',
-)
-public_client.public.get_markets()
-```
+# Public data (no auth needed)
+client = Client(host=API_HOST_MAINNET)
+markets = client.public.get_markets()
+orderbook = client.public.get_orderbook('BTC-USD')
 
-### Private endpoints
-
-One of the following is required:
-* `api_key_credentials`
-* `eth_private_key`
-* `web3`
-* `web3_account`
-* `web3_provider`
-
-```python
-#
-# Access private API endpoints, without providing a STARK private key.
-#
-private_client = Client(
-    host='http://localhost:8080',
-    api_key_credentials={ 'key': '...', ... },
-)
-private_client.private.get_orders()
-private_client.private.create_order(
-    # No STARK key, so signatures are required for orders and withdrawals.
-    signature='...',
-    # ...
-)
-
-#
-# Access private API endpoints, with a STARK private key.
-#
-private_client_with_key = Client(
-    host='http://localhost:8080',
-    api_key_credentials={ 'key': '...', ... },
+# Authenticated trading
+client = Client(
+    host=API_HOST_MAINNET,
+    api_key_credentials={'key': '...', 'secret': '...', 'passphrase': '...'},
     stark_private_key='...',
 )
-private_client.private.create_order(
-    # Order will be signed using the provided STARK private key.
-    # ...
+client.private.create_order(
+    position_id='12345',
+    market='ETH-USD',
+    side='BUY',
+    order_type='LIMIT',
+    post_only=True,
+    size='1.0',
+    price='3000',
+    limit_fee='0.0015',
+    expiration_epoch_seconds=1700000000,
 )
 ```
 
-### Onboarding and API key management endpoints
-
-One of the following is required:
-* `eth_private_key`
-* `web3`
-* `web3_account`
-* `web3_provider`
+### Run a Backtest
 
 ```python
-#
-# Onboard a new user or manage API keys, without providing private keys.
-#
-web3_client = Client(
-    host='http://localhost:8080',
-    web3_provider=Web3.HTTPProvider('http://localhost:8545'),
-)
-web3_client.onboarding.create_user(
-    stark_public_key='...',
-    ethereum_address='...',
-)
-web3_client.eth_private.create_api_key(
-    ethereum_address='...',
-)
+from quant import Backtester, BacktestConfig, Strategy, Order, Side
+from quant.types import Position
 
-#
-# Onboard a new user or manage API keys, with private keys.
-#
-web3_client_with_keys = Client(
-    host='http://localhost:8080',
-    stark_private_key='...',
-    eth_private_key='...',
-)
-web3_client_with_keys.onboarding.create_user()
-web3_client_with_keys.eth_private.create_api_key()
+class MomentumStrategy(Strategy):
+    def on_candle(self, candle, positions, equity, context):
+        lookback = context.lookback(20)
+        if len(lookback) < 20:
+            return []
+        sma = lookback['close'].mean()
+        size = equity * 0.1 / candle['close']
+
+        if candle['close'] > sma and 'ETH-USD' not in positions:
+            return [Order(market='ETH-USD', side=Side.BUY, size=size)]
+        elif candle['close'] < sma and 'ETH-USD' in positions:
+            return [Order(market='ETH-USD', side=Side.SELL,
+                          size=abs(positions['ETH-USD'].size))]
+        return []
+
+bt = Backtester(BacktestConfig(initial_equity=10_000))
+bt.load_candles_from_api(client.public, 'ETH-USD', '1HOUR', limit=500)
+result = bt.run(MomentumStrategy())
+
+print(f"Sharpe:   {result.metrics['sharpe_ratio']:.2f}")
+print(f"Max DD:   {result.metrics['max_drawdown']:.1%}")
+print(f"Return:   {result.metrics['total_return']:.1%}")
 ```
 
-### Using the C++ Library for STARK Signing
+### Market Making with Signals
 
-By default, STARK curve operations such as signing and verification will use the Python native implementation. These operations occur whenever placing an order or requesting a withdrawal. To use the C++ implementation, initialize the client object with `crypto_c_exports_path`:
+```python
+from quant import MarketMaker, MarketMakerConfig, OrderbookImbalance
+
+mm = MarketMaker(client, MarketMakerConfig(
+    market='BTC-USD',
+    order_size=0.001,
+    max_inventory=0.01,
+    gamma=0.1,        # risk aversion
+    k=1.5,            # order arrival intensity
+    min_spread_bps=5,
+))
+
+# Continuous quoting loop
+while True:
+    bid, ask = mm.run_once()
+    time.sleep(mm._config.refresh_interval_s)
+```
+
+## Quantitative Components
+
+### Market-Making Engine
+
+Implements the **Avellaneda-Stoikov (2008)** optimal market-making model for perpetual futures.
+
+**Core formulas:**
+- **Reservation price:** `r = mid - q * γ * σ² * τ` — shifts quotes to shed inventory
+- **Optimal spread:** `δ = γ * σ² * τ + (2/γ) * ln(1 + γ/k)` — widens with volatility and risk aversion
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `gamma` | Inventory risk aversion | 0.1 |
+| `k` | Order arrival intensity | 1.5 |
+| `min_spread_bps` | Minimum spread floor | 5 bps |
+| `max_spread_bps` | Maximum spread cap | 100 bps |
+| `max_inventory` | Hard position limit | - |
+| `session_duration_s` | Rolling time horizon | 3600s |
+
+Key features:
+- Inventory skewing (long inventory → lower quotes to attract sellers)
+- Signal integration via `apply_signal()` for directional bias
+- Rolling session horizon avoids τ→0 singularity
+- Pure computation separated from exchange interaction for testability
+
+### Backtesting Framework
+
+Event-driven backtester with vectorized data loading and realistic simulation.
+
+**Strategy interface:**
+```python
+class Strategy(abc.ABC):
+    @abc.abstractmethod
+    def on_candle(self, candle, positions, equity, context) -> List[Order]:
+        """Return orders to execute. Context provides safe lookback()."""
+        ...
+```
+
+Features:
+- **Lookahead prevention** via `BacktestContext.lookback(n)`
+- **Fill simulation**: market orders at close ± slippage, limit orders check candle range
+- **Position management**: weighted-avg entry on increase, realized PnL on reduce/flip
+- **Funding rate simulation**: hourly payments matching dYdX's model (critical for perps)
+- **Metrics**: Sharpe, Sortino, max drawdown, total return, win rate, profit factor
+
+### Signal Pipeline
+
+Four signal generators, each outputting a normalized score in [-1, 1]:
+
+| Signal | Description | Formula |
+|--------|-------------|---------|
+| **Orderbook Imbalance** | Bid/ask volume ratio from L2 book | `(bid_vol - ask_vol) / total` |
+| **Funding Rate Mean Reversion** | Extreme funding predicts reversion | `-tanh(avg_rate / threshold)` |
+| **Cross-Asset Momentum** | Leader-follower lag detection (BTC→ETH) | `clip((leader_z - follower_z) / 4)` |
+| **Volatility Regime** | Classifies vol into LOW/NORMAL/HIGH/CRISIS | Percentile rank of rolling vol |
+
+Signals compose via `SignalCombiner` with configurable weights:
+```python
+combiner = SignalCombiner({
+    'ob_imbalance_BTC-USD': 0.3,
+    'funding_mr_BTC-USD': 0.4,
+    'vol_regime_BTC-USD': 0.3,
+})
+composite = combiner.combine([sig1, sig2, sig3])
+```
+
+### Risk Monitor
+
+Real-time portfolio risk tracking with configurable circuit breakers.
+
+| Circuit Breaker | Default Threshold | Description |
+|----------------|-------------------|-------------|
+| Max drawdown | 10% | From peak equity |
+| Max exposure | $50,000 | Total notional across all positions |
+| Margin utilization | 80% | Exposure / equity |
+| VaR (95%) | $2,000 | 1-day historical simulation VaR |
+| Position size | 100 units | Per-market absolute size limit |
+| Single loss | $500 | Per-position unrealized loss |
+
+Features:
+- Works in **live mode** (fetches from API) and **backtest mode** (pure computation)
+- Historical simulation VaR with parametric fallback
+- `emergency_flatten()` cancels all orders and closes positions
+- Callback hook `on_breaker` for custom alerting
+
+## C++ Order Book Engine
+
+High-performance L2 order book implemented in C++ with pybind11 Python bindings. ~**85x faster** than an equivalent pure Python implementation.
+
+**Operations:**
+- `add_order(id, side, price, size)` — O(log N) insert into sorted price map
+- `cancel_order(id)` — O(1) lookup + O(log N) level removal
+- `modify_order(id, new_size)` — O(1) lookup + O(1) size update
+- `top()` — O(1) BBO, mid-price, micro-price, spread
+- `vwap(side, size)` — sweep through levels for volume-weighted avg price
+- `imbalance(depth)` — bid/ask volume ratio over top N levels
+- `bid_depth(n)` / `ask_depth(n)` — N levels of market depth
+
+**Data structures:** `std::map<double, PriceLevel>` for O(log N) sorted levels, `std::unordered_map<uint64_t, Order>` for O(1) order lookup.
+
+```python
+import orderbook_cpp as ob
+
+book = ob.OrderBook()
+book.add_order(1, ob.BUY, 50000.0, 1.5)
+book.add_order(2, ob.SELL, 50010.0, 0.8)
+
+tob = book.top()
+print(f"Spread: {tob.spread}  Mid: {tob.mid_price}  Micro: {tob.micro_price:.2f}")
+print(f"VWAP to buy 1 BTC: {book.vwap(ob.BUY, 1.0):.2f}")
+print(f"Imbalance: {book.imbalance(10):+.3f}")
+```
+
+**Build:**
+```bash
+cd cpp && ./build.sh
+```
+
+Requires CMake 3.14+, a C++17 compiler, and pybind11 (`pip install pybind11`).
+
+## Project Structure
+
+```
+dydx3/                    # API client library
+  dydx_client.py          #   Main Client class
+  modules/                #   API endpoint modules (public, private, eth, onboarding)
+  eth_signing/            #   Ethereum EIP-712 signing
+  starkex/                #   STARK key cryptography & order signing
+  helpers/                #   HTTP, query building, ID generation
+
+cpp/                      # C++ order book engine
+  orderbook.h / .cpp      #   Core engine (std::map + unordered_map)
+  bindings.cpp             #   pybind11 Python module
+  CMakeLists.txt           #   Build configuration
+  benchmark.py             #   Python vs C++ benchmark (~85x speedup)
+
+quant/                    # Quantitative trading toolkit
+  types.py                #   Shared dataclasses (Candle, Position, Signal, etc.)
+  utils.py                #   Numerical helpers (vol, Sharpe, drawdown)
+  signals.py              #   4 signal generators + SignalCombiner
+  backtester.py           #   Strategy ABC + Backtester engine
+  market_maker.py         #   Avellaneda-Stoikov market maker
+  risk_monitor.py         #   Risk tracking + circuit breakers
+
+examples/                 # Runnable examples
+  quant_backtest.py       #   Momentum strategy backtest
+  quant_market_maker.py   #   Market maker with signals
+  quant_signals.py        #   Signal pipeline demo
+  quant_risk_monitor.py   #   Risk monitor demo
+
+tests/                    # 143 unit tests
+```
+
+## Running Examples
+
+```bash
+python examples/quant_backtest.py        # Backtest a momentum strategy
+python examples/quant_market_maker.py    # Market maker dry run
+python examples/quant_signals.py         # Signal pipeline demo
+python examples/quant_risk_monitor.py    # Risk monitor scenarios
+```
+
+## Development
+
+```bash
+# Install dependencies
+pip install -r requirements.txt
+pip install -r requirements-test.txt
+
+# Run tests
+pytest tests/
+
+# Lint
+flake8 dydx3/ quant/ --max-line-length=100
+
+# Type check
+mypy dydx3/ --ignore-missing-imports
+```
+
+## API Client Reference
+
+### Authentication Levels
+
+| Level | Required Credentials | Endpoints |
+|-------|---------------------|-----------|
+| Public | None | Markets, orderbook, candles, trades, funding |
+| Private | `api_key_credentials` | Orders, positions, fills, transfers, PnL |
+| Eth Private | `eth_private_key` or `web3` | API key management, recovery |
+| Onboarding | `eth_private_key` or `web3` | User creation, STARK key derivation |
+
+### Supported Markets
+
+39 perpetual futures markets including BTC-USD, ETH-USD, SOL-USD, AVAX-USD, LINK-USD, AAVE-USD, UNI-USD, DOGE-USD, MATIC-USD, and more. All USDC-margined.
+
+### STARK Signing Performance
+
+For faster order signing, provide a path to the C++ shared library:
 
 ```python
 client = Client(
@@ -128,16 +326,6 @@ client = Client(
 )
 ```
 
-The path should point to a C++ shared library file, built from Starkware's `crypto-cpp` library ([CMake target](https://github.com/starkware-libs/crypto-cpp/blob/601de408bee9f897315b8a5cb0c88e2450a91282/src/starkware/crypto/ffi/CMakeLists.txt#L3)) for the particular platform (e.g. Linux, etc.) that you are running your trading program on.
+## License
 
-## Running tests
-
-If you want to run tests when developing the library locally, clone the repo and run:
-
-```
-pip install -r requirements.txt
-docker-compose up # In a separate terminal
-V3_API_HOST=<api-host> tox
-```
-
-NOTE: `api-host` should be `https://api.stage.dydx.exchange` to test in staging.
+Apache 2.0

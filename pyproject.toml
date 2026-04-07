@@ -37,6 +37,8 @@ dependencies = [
     "requests>=2.22.0,<3.0.0",
     "sympy>=1.6",
     "web3>=5.0.0,<6.0.0",
+    "numpy>=1.24.0",
+    "pandas>=2.0.0",
 ]
 
 [project.optional-dependencies]
@@ -54,7 +56,7 @@ Repository = "https://github.com/dydxprotocol/dydx-v3-python"
 Issues = "https://github.com/dydxprotocol/dydx-v3-python/issues"
 
 [tool.setuptools.packages.find]
-include = ["dydx3*"]
+include = ["dydx3*", "quant*"]
 
 [tool.setuptools.package-data]
 dydx3 = ["abi/*.json", "starkex/starkex_resources/*.json"]

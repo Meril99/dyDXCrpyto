@@ -13,6 +13,8 @@ REQUIREMENTS = [
     'requests>=2.22.0,<3.0.0',
     'sympy>=1.6',
     'web3>=5.0.0,<6.0.0',
+    'numpy>=1.24.0',
+    'pandas>=2.0.0',
 ]
 
 setup(
