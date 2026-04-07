@@ -26,7 +26,9 @@ var/
 .installed.cfg
 *.egg
 
+.env
 .env.local
+bot.log
 
 # VIM
 *.swo
@@ -41,3 +43,4 @@ htmlcov/
 
 # Local testing
 test_local.py
+docs/

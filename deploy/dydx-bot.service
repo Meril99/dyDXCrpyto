@@ -1,0 +1,31 @@
+# systemd service file for the dYdX trading bot.
+# Copy to: /etc/systemd/system/dydx-bot.service
+# Then: sudo systemctl enable dydx-bot && sudo systemctl start dydx-bot
+
+[Unit]
+Description=dYdX Market Making Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/dydx-v3-python
+Environment=PYTHONPATH=/home/ubuntu/dydx-v3-python
+ExecStart=/usr/bin/python3 /home/ubuntu/dydx-v3-python/bot.py
+
+# Auto-restart on crash (wait 30 seconds before restarting)
+Restart=on-failure
+RestartSec=30
+
+# Logging
+StandardOutput=append:/home/ubuntu/dydx-v3-python/bot.log
+StandardError=append:/home/ubuntu/dydx-v3-python/bot.log
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/home/ubuntu/dydx-v3-python
+
+[Install]
+WantedBy=multi-user.target
