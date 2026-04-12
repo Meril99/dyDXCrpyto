@@ -1,0 +1,169 @@
+# =============================================================================
+# GitLab CI/CD Pipeline — dYdX Market Making Bot
+#
+# Stages:
+#   lint     → Static analysis (flake8, mypy)
+#   test     → Unit tests across Python 3.10–3.12
+#   build    → Docker image build + push to registry
+#   deploy   → Deploy to staging/production servers
+#
+# Variables (set in GitLab CI/CD Settings > Variables):
+#   CI_REGISTRY_IMAGE    — Auto-set by GitLab for container registry
+#   DEPLOY_SSH_KEY       — SSH private key for deployment servers
+#   STAGING_HOST         — Staging server hostname
+#   PRODUCTION_HOST      — Production server hostname
+#   DEPLOY_USER          — SSH user on deployment servers
+# =============================================================================
+
+stages:
+  - lint
+  - test
+  - build
+  - deploy
+
+variables:
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.pip-cache"
+  DOCKER_BUILDKIT: "1"
+
+# ── Reusable cache config ───────────────────────────────────────────────────
+.python-cache: &python-cache
+  cache:
+    key: "${CI_COMMIT_REF_SLUG}-pip"
+    paths:
+      - .pip-cache/
+
+# ── Stage: Lint ─────────────────────────────────────────────────────────────
+
+flake8:
+  stage: lint
+  image: python:3.11-slim
+  <<: *python-cache
+  script:
+    - pip install flake8
+    - flake8 dydx3/ quant/ --max-line-length=100 --statistics
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+mypy:
+  stage: lint
+  image: python:3.11-slim
+  <<: *python-cache
+  script:
+    - pip install -r requirements.txt mypy types-requests
+    - mypy dydx3/ --ignore-missing-imports --no-error-summary
+  allow_failure: true
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# ── Stage: Test ─────────────────────────────────────────────────────────────
+
+.test-template: &test-template
+  stage: test
+  <<: *python-cache
+  before_script:
+    - pip install -r requirements-test.txt
+  script:
+    - pytest tests/ -v --tb=short --junitxml=report.xml
+  artifacts:
+    when: always
+    reports:
+      junit: report.xml
+    expire_in: 30 days
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+test-py310:
+  <<: *test-template
+  image: python:3.10-slim
+
+test-py311:
+  <<: *test-template
+  image: python:3.11-slim
+
+test-py312:
+  <<: *test-template
+  image: python:3.12-slim
+
+# ── Stage: Build ────────────────────────────────────────────────────────────
+
+build-image:
+  stage: build
+  image: docker:24.0
+  services:
+    - docker:24.0-dind
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"
+  before_script:
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+  script:
+    - |
+      docker build \
+        --cache-from "$CI_REGISTRY_IMAGE:latest" \
+        --tag "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA" \
+        --tag "$CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG" \
+        --tag "$CI_REGISTRY_IMAGE:latest" \
+        --build-arg BUILDKIT_INLINE_CACHE=1 \
+        .
+    - docker push "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA"
+    - docker push "$CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG"
+    - docker push "$CI_REGISTRY_IMAGE:latest"
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_TAG
+
+# ── Stage: Deploy ───────────────────────────────────────────────────────────
+
+.deploy-template: &deploy-template
+  stage: deploy
+  image: alpine:3.19
+  before_script:
+    - apk add --no-cache openssh-client
+    - eval $(ssh-agent -s)
+    - echo "$DEPLOY_SSH_KEY" | tr -d '\r' | ssh-add -
+    - mkdir -p ~/.ssh && chmod 700 ~/.ssh
+    - ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+
+deploy-staging:
+  <<: *deploy-template
+  variables:
+    DEPLOY_HOST: "$STAGING_HOST"
+  script:
+    - |
+      ssh "$DEPLOY_USER@$DEPLOY_HOST" << 'ENDSSH'
+        cd ~/dydx-v3-python
+        git pull origin main
+        docker compose pull
+        docker compose up -d --force-recreate bot
+        docker compose logs --tail=20 bot
+      ENDSSH
+  environment:
+    name: staging
+    url: https://staging.example.com
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual
+
+deploy-production:
+  <<: *deploy-template
+  variables:
+    DEPLOY_HOST: "$PRODUCTION_HOST"
+  script:
+    - |
+      ssh "$DEPLOY_USER@$DEPLOY_HOST" << 'ENDSSH'
+        cd ~/dydx-v3-python
+        git fetch && git checkout $CI_COMMIT_TAG
+        docker compose pull
+        docker compose up -d --force-recreate bot
+        sleep 10
+        docker compose ps bot | grep -q "Up" && echo "Deploy OK" || (echo "Deploy FAILED" && exit 1)
+      ENDSSH
+  environment:
+    name: production
+    url: https://production.example.com
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
+      when: manual
+  allow_failure: false

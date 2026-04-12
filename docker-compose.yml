@@ -1,7 +1,82 @@
-version: '3'
+# =============================================================================
+# Docker Compose — dYdX Market Making Bot (full stack)
+#
+# Services:
+#   bot       — The market-making bot (multi-stage build with C++ order book)
+#   ganache   — Local Ethereum node for integration tests
+#   redis     — Optional shared state / caching layer
+#
+# Usage:
+#   docker compose up -d              # Start all services
+#   docker compose up bot             # Start bot only (assumes .env is filled)
+#   docker compose up ganache         # Local test blockchain only
+#   docker compose logs -f bot        # Follow bot logs
+#   docker compose down               # Stop everything
+# =============================================================================
+
 services:
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dydx-bot
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - bot-logs:/app/logs
+    networks:
+      - dydx-net
+    depends_on:
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1G
+        reservations:
+          cpus: "0.5"
+          memory: 256M
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
   ganache:
     image: trufflesuite/ganache-cli:v6.12.2
+    container_name: dydx-ganache
     ports:
-      - 8545:8545
+      - "8545:8545"
     command: ganache-cli -d -k=petersburg -i 1001
+    networks:
+      - dydx-net
+    profiles:
+      - test
+
+  redis:
+    image: redis:7-alpine
+    container_name: dydx-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - dydx-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru
+
+volumes:
+  bot-logs:
+  redis-data:
+
+networks:
+  dydx-net:
+    driver: bridge
