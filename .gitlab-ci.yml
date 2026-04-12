@@ -40,7 +40,7 @@ flake8:
   <<: *python-cache
   script:
     - pip install flake8
-    - flake8 dydx3/ quant/ --max-line-length=100 --statistics
+    - flake8 dydx3/ quant/ --statistics
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
@@ -50,6 +50,7 @@ mypy:
   image: python:3.11-slim
   <<: *python-cache
   script:
+    - pip install 'setuptools<70'
     - pip install -r requirements.txt mypy types-requests
     - mypy dydx3/ --ignore-missing-imports --no-error-summary
   allow_failure: true
@@ -63,6 +64,7 @@ mypy:
   stage: test
   <<: *python-cache
   before_script:
+    - pip install 'setuptools<70'
     - pip install -r requirements-test.txt
   script:
     - pytest tests/ -v --tb=short --junitxml=report.xml
