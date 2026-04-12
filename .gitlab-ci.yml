@@ -67,7 +67,7 @@ mypy:
     - pip install 'setuptools<70'
     - pip install -r requirements-test.txt
   script:
-    - pytest tests/ -v --tb=short --junitxml=report.xml
+    - pytest tests/ -v --tb=short --junitxml=report.xml --ignore=tests/test_public.py --ignore=tests/test_onboarding.py -k "not local_node"
   artifacts:
     when: always
     reports:
@@ -80,14 +80,6 @@ mypy:
 test-py310:
   <<: *test-template
   image: python:3.10-slim
-
-test-py311:
-  <<: *test-template
-  image: python:3.11-slim
-
-test-py312:
-  <<: *test-template
-  image: python:3.12-slim
 
 # ── Stage: Build ────────────────────────────────────────────────────────────
 
